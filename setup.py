@@ -1,17 +1,16 @@
-
 from setuptools import setup, find_packages
 
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
-setup(name='{{ project_name }}',
+setup(name='guardgraph',
       version='0.0.1',
-      description='{{ short_description }}',
+      description='GUARDIAN graph package',
       long_description=long_description,
       long_description_content_type="text/markdown",
-      url='https://github.com/AgentschapPlantentuinMeise/{{ project_name }}',
+      url='https://github.com/AgentschapPlantentuinMeise/guardgraph',
       author='Christophe Van Neste',
-      author_email='{{ your_plantentuin_email }}',
+      author_email='christophe.vanneste@plantentuinmeise.be',
       license='MIT',
       packages=find_packages(),
       python_requires='>=3.6',
@@ -22,6 +21,8 @@ setup(name='{{ project_name }}',
           "Development Status :: 1 - Planning"
       ],
       install_requires=[
+          'flask',
+          'neo4j'
       ],
       extras_require={
           'documentation': ['Sphinx']

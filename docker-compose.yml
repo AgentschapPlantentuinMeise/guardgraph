@@ -1,0 +1,17 @@
+version: "3.9"
+services:
+  web:
+    build: .
+    ports:
+      - "8000:5000"
+    volumes:
+      - .:/data
+    environment:
+      FLASK_APP: "guardgraph"
+  neo4j:
+    image: "neo4j"
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - .:/data
