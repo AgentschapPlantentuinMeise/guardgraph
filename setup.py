@@ -32,7 +32,6 @@ setup(name='guardgraph',
       zip_safe=False,
       entry_points={
           'console_scripts': [
-              '{{ cli_tool_name}}={{ project_name }}.__main__:main'
           ],
       },
       test_suite='nose.collector',
