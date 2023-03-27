@@ -1,16 +1,17 @@
 import os
 import gzip
 from neo4j import GraphDatabase
+from itertools import count
 
 class InteractionsGraph(object):
     def __init__(self, password=None, passfile='/data/.neo4j_credentials'):
         self._passfile = passfile
         if password: self._password = password
         elif os.path.exists(self._passfile):
-            self._password = open(self._passfile).read()
+            self._password = open(self._passfile).read().strip()
         else:
             self._password = self.set_random_password()
-        self.driver = GraphDatabase.driver("neo4j://localhost:7687",
+        self.driver = GraphDatabase.driver("neo4j://neo4j:7687",
                               auth=("neo4j", self._password))
 
     def __del__(self):
@@ -18,7 +19,7 @@ class InteractionsGraph(object):
 
     # neo4j admin methods
     def set_password(self, password):
-        driver = GraphDatabase.driver("neo4j://localhost:7687",
+        driver = GraphDatabase.driver("neo4j://neo4j:7687",
                               auth=("neo4j", "neo4j"))
         with driver.session(database="system") as session:
             result = session.execute_write(
@@ -37,10 +38,13 @@ class InteractionsGraph(object):
         return password
 
     # graph loading methods
-    def load_interaction(self, interactions_file='/data/globi/interactions.tsv.gz'):
+    def load_interaction(self, interactions_file='/data/globi/interactions.tsv.gz', max_entries=10):
+        if max_entries: entries_count = count()
         intergz = gzip.open('/data/globi/interactions.tsv.gz')
         header = intergz.readline().decode().strip().split('\t')
         for line in intergz:
+            if max_entries and max_entries < next(entries_count):
+                break
             line = line.decode().strip().split('\t')
             sourceTaxonId = line[0]
             ## Properties
@@ -61,10 +65,15 @@ class InteractionsGraph(object):
             targetTaxonRank = line[43]
             targetOccurenceId = line[64]
             with self.driver.session(database="neo4j") as session:
-                session.execute_write(self.add_interaction, "species1", "species2")
-        session.execute_read(print_friends, "species1")
+                session.execute_write(
+                    self.add_interaction, source_name=sourceTaxonName,
+                    source_id=sourceTaxonId, source_rank=sourceTaxonRank,
+                    target_name=targetTaxonName, target_id=targetTaxonId,
+                    target_rank=targetTaxonRank, ix_name=interactionTypeName)
+        with self.driver.session(database="neo4j") as session:
+            session.execute_read(self.print_interactions, sourceTaxonName)
 
-    @static_method
+    @staticmethod
     def add_interaction(
             tx, source_name, source_id, source_rank,
             target_name, target_id, target_rank, ix_name):
@@ -77,10 +86,10 @@ class InteractionsGraph(object):
                ix_name=ix_name
         )
 
-    @static_method
+    @staticmethod
     def print_interactions(tx, name):
-        query = ("MATCH (a:Species)-[:KNOWS]->(species) WHERE a.name = $name "
-             "RETURN species.name ORDER BY species.name")
+        query = ("MATCH (a:Taxon)-[:KNOWS]->(taxon) WHERE a.name = $name "
+             "RETURN taxon.name ORDER BY taxon.name")
         for record in tx.run(query, name=name):
-            print(record["species.name"])
+            print(record["taxon.name"])
             
