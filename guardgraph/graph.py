@@ -37,10 +37,18 @@ class InteractionsGraph(object):
         self.set_password(password)
         return password
 
+    def reset_graph(self, force=False):
+        "Deletes all current nodes and relationships"
+        if not force:
+            if not input('Are you sure you would to delete the full graph?') == 'yes':
+                return
+        with self.driver.session(database="neo4j") as session:
+            session.execute_write(lambda tx: tx.run("MATCH (n) DETACH DELETE n;"))
+        
     # graph loading methods
-    def load_interaction(self, interactions_file='/data/globi/interactions.tsv.gz', max_entries=10):
+    def load_interaction_data(self, interactions_file='/data/globi/interactions.tsv.gz', max_entries=10):
         if max_entries: entries_count = count()
-        intergz = gzip.open('/data/globi/interactions.tsv.gz')
+        intergz = gzip.open(interactions_file)
         header = intergz.readline().decode().strip().split('\t')
         for line in intergz:
             if max_entries and max_entries < next(entries_count):

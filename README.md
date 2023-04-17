@@ -26,7 +26,18 @@ Example:
 
     %load_ext autoreload
     %autoreload 2
+    %cd /code
     from guardgraph.graph import InteractionsGraph
     ig = InteractionsGraph()
-    ig.load_interaction()
+    ig.load_interaction_data()
+
+Time to load:
+
+| Entries | Time to load | Std.dev |
+| ------- | ------------ | ------- |
+| 10      | 37.7 ms      | 4.54 ms |
+| 100     | 191 ms       | 23.3 ms |
+| 1000    | 1.21 s       | 46.3 ms |
+| 10000   | 46.6 s       | 627 ms  |
+| 100000  | 21min 28s    |         |
 
