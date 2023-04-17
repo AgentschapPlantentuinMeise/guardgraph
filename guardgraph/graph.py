@@ -40,16 +40,17 @@ class InteractionsGraph(object):
     def reset_graph(self, force=False):
         "Deletes all current nodes and relationships"
         if not force:
-            if not input('Are you sure you would to delete the full graph?') == 'yes':
+            if not input('Are you sure you would to delete the full graph? ') == 'yes':
                 return
         with self.driver.session(database="neo4j") as session:
             session.execute_write(lambda tx: tx.run("MATCH (n) DETACH DELETE n;"))
         
     # graph loading methods
-    def load_interaction_data(self, interactions_file='/data/globi/interactions.tsv.gz', max_entries=10):
+    def load_interaction_data(self, interactions_file='/data/globi/interactions.tsv.gz', max_entries=10, batch_size=1, cypher_batched=True):
         if max_entries: entries_count = count()
         intergz = gzip.open(interactions_file)
         header = intergz.readline().decode().strip().split('\t')
+        batch = []
         for line in intergz:
             if max_entries and max_entries < next(entries_count):
                 break
@@ -72,20 +73,45 @@ class InteractionsGraph(object):
             targetTaxonName = line[42]
             targetTaxonRank = line[43]
             targetOccurenceId = line[64]
+            batch.append({
+                    'source_name':sourceTaxonName,
+                    'source_id': sourceTaxonId,
+                    'source_rank': sourceTaxonRank,
+                    'target_name': targetTaxonName,
+                    'target_id': targetTaxonId,
+                    'target_rank': targetTaxonRank,
+                    'ix_name': interactionTypeName,
+                    'escaped_ix_name': interactionTypeName.upper(
+                    ).replace("\\u0060", "`").replace("`", "``")
+            })
+            if len(batch) > batch_size:
+                with self.driver.session(database="neo4j") as session:
+                    if cypher_batched:
+                        session.execute_write(self.add_interactions,
+                                              interactions=batch)
+                    else:
+                        for interaction in batch:
+                            session.execute_write(
+                                self.add_interaction, **interaction)
+                batch = []
+        if batch:
             with self.driver.session(database="neo4j") as session:
-                session.execute_write(
-                    self.add_interaction, source_name=sourceTaxonName,
-                    source_id=sourceTaxonId, source_rank=sourceTaxonRank,
-                    target_name=targetTaxonName, target_id=targetTaxonId,
-                    target_rank=targetTaxonRank, ix_name=interactionTypeName)
+                if cypher_batched:
+                    session.execute_write(self.add_interactions,
+                                          interactions=batch)
+                else:
+                    for interaction in batch:
+                        session.execute_write(
+                            self.add_interaction, **interaction)
+        intergz.close()
         with self.driver.session(database="neo4j") as session:
             session.execute_read(self.print_interactions, sourceTaxonName)
 
     @staticmethod
     def add_interaction(
             tx, source_name, source_id, source_rank,
-            target_name, target_id, target_rank, ix_name):
-        escaped_ix_name = ix_name.capitalize().replace("\\u0060", "`").replace("`", "``")
+            target_name, target_id, target_rank,
+            ix_name, escaped_ix_name):
         tx.run("MERGE (source:Taxon {name: $source_name, id: $source_id, rank: $source_rank}) "
                "MERGE (target:Taxon {name: $target_name, id: $target_id, rank: $target_rank}) "
                f"MERGE (source)-[:`{escaped_ix_name}`]->(target)",
@@ -93,6 +119,17 @@ class InteractionsGraph(object):
                target_name=target_name, target_id=target_id, target_rank=target_rank,
                ix_name=ix_name
         )
+
+    @staticmethod
+    def add_interactions(tx, interactions):
+        query = '''
+          UNWIND $rows AS row
+          MERGE (source:Taxon {name: row.source_name, id: row.source_id, rank: row.source_rank})
+          MERGE (target:Taxon {name: row.target_name, id: row.target_id, rank: row.target_rank})
+          MERGE (source)-[:`row.escaped_ix_name`]->(target)
+          RETURN count(*) as total
+        '''
+        tx.run(query, rows=interactions)
 
     @staticmethod
     def print_interactions(tx, name):
