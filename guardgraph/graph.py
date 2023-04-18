@@ -126,7 +126,7 @@ class InteractionsGraph(object):
           UNWIND $rows AS row
           MERGE (source:Taxon {name: row.source_name, id: row.source_id, rank: row.source_rank})
           MERGE (target:Taxon {name: row.target_name, id: row.target_id, rank: row.target_rank})
-          MERGE (source)-[:`row.escaped_ix_name`]->(target)
+          MERGE (source)-[:`$row.escaped_ix_name`]->(target)
           RETURN count(*) as total
         '''
         tx.run(query, rows=interactions)
