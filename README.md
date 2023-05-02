@@ -45,7 +45,7 @@ With cypher batches:
 
     %%timeit -r1 -n1 ix.reset_graph(force=True)
     ix.load_interaction_data(
-        max_entries=100000, batch_size=50000, cypher_batched=True
+        max_entries=10000, batch_size=5000, cypher_batched=True
     )
 
 | Entries | Batch size | Time to load | Std.dev |
