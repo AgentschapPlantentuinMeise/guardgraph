@@ -37,13 +37,18 @@ class InteractionsGraph(object):
         self.set_password(password)
         return password
 
-    def reset_graph(self, force=False):
+    def reset_graph(self, force=False, relationships_only=False):
         "Deletes all current nodes and relationships"
         if not force:
             if not input('Are you sure you would to delete the full graph? ') == 'yes':
                 return
         with self.driver.session(database="neo4j") as session:
-            session.execute_write(lambda tx: tx.run("MATCH (n) DETACH DELETE n;"))
+            if relationships_only:
+                # In neo4j browser:
+                # :auto MATCH ()-[r]->() CALL { WITH r DELETE r } IN TRANSACTIONS OF 10000 ROWS
+                session.run("MATCH ()-[r]->() CALL { WITH r DELETE r } IN TRANSACTIONS OF 10000 ROWS;")
+            else:
+                session.run("MATCH (n) CALL { WITH n DETACH DELETE n } IN TRANSACTIONS OF 10000 ROWS;")
 
     # prep_interaction_data
     def prep_interaction_data(self, interactions_file='/data/globi/interactions.tsv.gz'):
@@ -105,6 +110,24 @@ class InteractionsGraph(object):
         #return result.data()
         with self.driver.session(database="neo4j") as session:
             session.run(q)
+
+    def load_taxon_relationships(self):
+        q = '''
+        LOAD CSV WITH HEADERS FROM 'file:///interactions.tsv' AS line FIELDTERMINATOR '\t'
+        WITH line WHERE line.sourceTaxonRank IS NOT NULL AND line.targetTaxonRank IS NOT NULL
+        CALL {
+          WITH line
+          MATCH (s:Taxon {name: line.sourceTaxonName})
+          MATCH (t:Taxon {name: line.targetTaxonName})
+          WITH s, t, line
+          CALL apoc.create.relationship(s, line.interactionTypeName, NULL, t) YIELD rel
+          RETURN rel
+        } IN TRANSACTIONS OF 5000 ROWS
+        RETURN COUNT(rel)
+        '''
+        with self.driver.session(database="neo4j") as session:
+            session.run(q)
+        # TIME started 10:34, ended 
         
     def load_interaction_data(self, interactions_file='/data/globi/interactions.tsv.gz', start=0, max_entries=10, batch_size=1, cypher_batched=True):
         if max_entries: entries_count = count()
