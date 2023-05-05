@@ -217,3 +217,82 @@ class InteractionsGraph(object):
         result = tx.run(query)
         return result.data()
 
+class EcoAnalysis(object):
+    def __init__(self):
+        self.ig = InteractionGraph()
+        self.gds = GraphDataScience(
+            'neo4j://neo4j:7687',
+            auth=('neo4j', self.ig._password)
+        )
+#node_projection = ['Taxon']
+#relationship_projection = {'eats': {'orientation': 'NATURAL'}}
+#result = gds.graph.project.estimate(node_projection, relationship_projection)
+#result['requiredMemory']
+#G, result = gds.graph.project("menu", node_projection, relationship_projection)
+#print(f"The projection took {result['projectMillis']} ms")
+#print(f"Graph '{G.name()}' node count: {G.node_count()}")
+#print(f"Graph '{G.name()}' node labels: {G.node_labels()}")
+#result = gds.fastRP.mutate.estimate(
+#    G,
+#    mutateProperty="embedding",
+#    randomSeed=42,
+#    embeddingDimension=4,
+#    #relationshipWeightProperty="amount",
+#    iterationWeights=[0.8, 1, 1, 1],
+#)
+#print(f"Required memory for running FastRP: {result['requiredMemory']}")
+#result = gds.fastRP.mutate(
+#    G,
+#    mutateProperty="embedding",
+#    randomSeed=42,
+#    embeddingDimension=4,
+#    #relationshipWeightProperty="amount",
+#    iterationWeights=[0.8, 1, 1, 1],
+#)
+#print(f"Number of embedding vectors produced: {result['nodePropertiesWritten']}")
+
+# result = gds.knn.write(
+#     G,
+#     topK=2,
+#     nodeProperties=["embedding"],
+#     randomSeed=42,
+#     concurrency=1,
+#     sampleRate=1.0,
+#     deltaThreshold=0.0,
+#     writeRelationshipType="SIMILAR",
+#     writeProperty="score",
+# )
+
+# print(f"Relationships produced: {result['relationshipsWritten']}")
+# print(f"Nodes compared: {result['nodesCompared']}")
+# print(f"Mean similarity: {result['similarityDistribution']['mean']}")
+
+#Exploring similar results
+#gds.run_cypher(
+#    """
+#        MATCH (t1:Taxon)-[r:SIMILAR]->(t2:Taxon)
+#        RETURN t1.name AS taxon1, t2.name AS taxon2, r.score AS similarity
+#        ORDER BY similarity DESCENDING, taxon1, taxon2
+#        LIMIT 5
+#    """
+#)
+
+#Get potential menu
+# gds.run_cypher(
+#     """
+#         MATCH (:Taxon {name: "Acronicta impleta"})-[:eats]->(t1:Taxon)
+#         WITH collect(t1) as dishes
+#         MATCH (:Taxon {name: "Orgyia definita"})-[:eats]->(t2:Taxon)
+#         WHERE not t2 in dishes
+#         RETURN t2.name as recommendation
+#     """
+# )
+
+# Get embeddings
+#CALL gds.graph.nodeProperty.stream('menu', 'embedding')
+#YIELD nodeId, propertyValue
+#RETURN gds.util.asNode(nodeId).name AS name, propertyValue AS embedding
+#ORDER BY embedding DESC LIMIT 10
+
+# Remove our projection from the GDS graph catalog
+# G.drop()
