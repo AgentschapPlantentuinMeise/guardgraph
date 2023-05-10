@@ -21,3 +21,4 @@ services:
       NEO4J_PLUGINS: '["apoc", "graph-data-science"]'
     volumes:
       - ${HOME}/data/gg:/data
+      - ${HOME}/data/gg/neo4j_import:/var/lib/neo4j/import

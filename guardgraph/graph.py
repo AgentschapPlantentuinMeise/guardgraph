@@ -1,10 +1,15 @@
 import os
+import re
+import time
 import gzip
-from neo4j import GraphDatabase
+import logging
+import warnings
 from itertools import count
+from neo4j import GraphDatabase
+from neo4j.exceptions import Neo4jError
 
 class InteractionsGraph(object):
-    def __init__(self, password=None, passfile='/data/.neo4j_credentials'):
+    def __init__(self, password=None, passfile='/data/.neo4j_credentials', initialize_database=False):
         self._passfile = passfile
         if password: self._password = password
         elif os.path.exists(self._passfile):
@@ -13,10 +18,22 @@ class InteractionsGraph(object):
             self._password = self.set_random_password()
         self.driver = GraphDatabase.driver("neo4j://neo4j:7687",
                               auth=("neo4j", self._password))
+        if initialize_database:
+            self.initialize_database()
 
     def __del__(self):
         self.driver.close()
 
+    def run_query(self, q, database="neo4j", timeit=False):
+        "Run query directly through session (implicit commit)"
+        with self.driver.session(database=database) as session:
+            if timeit:
+                start = time.perf_counter()
+            result = session.run(q)
+            if timeit:
+                logging.info('Query took %s s', time.perf_counter()-start)
+            return result.data()
+            
     # neo4j admin methods
     def set_password(self, password):
         driver = GraphDatabase.driver("neo4j://neo4j:7687",
@@ -43,19 +60,51 @@ class InteractionsGraph(object):
             if not input('Are you sure you would to delete the full graph? ') == 'yes':
                 return
         with self.driver.session(database="neo4j") as session:
-            if relationships_only:
-                # In neo4j browser:
-                # :auto MATCH ()-[r]->() CALL { WITH r DELETE r } IN TRANSACTIONS OF 10000 ROWS
-                session.run("MATCH ()-[r]->() CALL { WITH r DELETE r } IN TRANSACTIONS OF 10000 ROWS;")
-            else:
+            # In neo4j browser:
+            # :auto MATCH ()-[r]->() CALL { WITH r DELETE r } IN TRANSACTIONS OF 10000 ROWS
+            session.run("MATCH ()-[r]->() CALL { WITH r DELETE r } IN TRANSACTIONS OF 10000 ROWS;")
+            if not relationships_only:
+                # Relationships should already be removed, but running this
+                # without deleting rel's separately gave mem issues
                 session.run("MATCH (n) CALL { WITH n DETACH DELETE n } IN TRANSACTIONS OF 10000 ROWS;")
 
+    def initialize_database(self):
+        """Initialize the full database.
+        Should do all steps required to build up database from scratch
+        """
+        # Requirement: globi interactions file should have been downloaded
+        # TODO automate download
+        self.prep_interaction_data_file()
+        try:
+            self.query('create_name_index', write=True)
+        except Neo4jError as e:
+            warnings.warn('Indices already created')
+        self.load_taxons()
+        self.load_taxon_labels()
+        self.load_taxon_relationships()
+        
     # prep_interaction_data
-    def prep_interaction_data(self, interactions_file='/data/globi/interactions.tsv.gz'):
+    def prep_interaction_data_file(self, interactions_file='/data/globi/interactions.tsv.gz'):
+        """neo4j LOAD CSV has an issue with quotes
+        hence they are removed and the file is written
+        to the location were neo4j can find it
+
+        bash command: zcat data/globi/interactions.tsv.gz | sed 's/"//g' > import/interactions.tsv
+
+        With current preprocessing takes around 10 min
+        Tested it with both byte and decoded but only made a few seconds difference
+        """
         c = count()
-        with gzip.open(interactions_file) as intergz:
-            for line in intergz:
-                next(c)
+        #pattern = re.compile(r'"') # +- 4x longer than string replace
+        if not os.path.exists('/data/neo4j_import'):
+            os.mkdir('/data/neo4j_import')
+            print("Created neo4j import dir for volume mapping")
+        with gzip.open(interactions_file, 'rt') as intergz:
+            with gzip.open('/data/neo4j_import/globi.tsv.gz', 'wt') as gz_out:
+                for line in intergz:
+                    gz_out.write(line.replace('"',''))
+                    #gz_out.write(pattern.sub('', line))
+                    next(c)
         print(c)
 
     @staticmethod
@@ -93,27 +142,51 @@ class InteractionsGraph(object):
         return processed_line
             
     # graph loading methods
-    #@staticmethod
-    def load_taxons(self):#tx, *args):
-        #zcat data/globi/interactions.tsv.gz | sed 's/"/""/g' > import interactions.tsv
+    def load_taxons(self):
+        # Transactions requires implicit committing
         q = '''
-        LOAD CSV WITH HEADERS FROM 'file:///interactions.tsv' AS line FIELDTERMINATOR '\t'
+        LOAD CSV WITH HEADERS FROM 'file:///globi.tsv.gz' AS line FIELDTERMINATOR '\t'
         //WITH line LIMIT 10
         WITH line WHERE line.sourceTaxonRank IS NOT NULL AND line.targetTaxonRank IS NOT NULL
         CALL {
           WITH line
-          MERGE (:Taxon {name: line.sourceTaxonName, id: line.sourceTaxonId, rank: line.sourceTaxonRank})
-          MERGE (:Taxon {name: line.targetTaxonName, id: line.targetTaxonId, rank: line.targetTaxonRank})
+          MERGE (source:Taxon {name: line.sourceTaxonName, rank: line.sourceTaxonRank})
+          ON CREATE
+            SET source.ids = [line.sourceTaxonId]
+          ON MATCH
+            SET source.ids = source.ids + line.sourceTaxonId
+          MERGE (target:Taxon {name: line.targetTaxonName, rank: line.targetTaxonRank})
+          ON CREATE
+            SET target.ids = [line.targetTaxonId]
+          ON MATCH
+            SET target.ids = target.ids + line.targetTaxonId
         } IN TRANSACTIONS OF 5000 ROWS
         '''
-        #result = tx.run(q)
-        #return result.data()
-        with self.driver.session(database="neo4j") as session:
-            session.run(q)
+        self.run_query(q)
 
+    def load_taxon_labels(self):
+        q = '''
+        LOAD CSV WITH HEADERS FROM 'file:///globi.tsv.gz' AS line FIELDTERMINATOR '\t'
+        //WITH line LIMIT 10
+        WITH line WHERE line.sourceTaxonRank IS NOT NULL AND line.targetTaxonRank IS NOT NULL
+        CALL {
+          WITH line
+          MATCH (s:Taxon {name: line.sourceTaxonName})
+          WITH s, line
+          CALL apoc.create.addLabels(s, [line.sourceTaxonRank]) YIELD node as nSource
+          MATCH (t:Taxon {name: line.targetTaxonName})
+          WITH t, line
+          CALL apoc.create.addLabels(t, [line.targetTaxonRank]) YIELD node as tSource
+          RETURN tSource
+        } IN TRANSACTIONS OF 1000 ROWS
+        RETURN COUNT(tSource)
+        '''
+        self.run_query(q)
+
+        
     def load_taxon_relationships(self):
         q = '''
-        LOAD CSV WITH HEADERS FROM 'file:///interactions.tsv' AS line FIELDTERMINATOR '\t'
+        LOAD CSV WITH HEADERS FROM 'file:///globi.tsv.gz' AS line FIELDTERMINATOR '\t'
         WITH line WHERE line.sourceTaxonRank IS NOT NULL AND line.targetTaxonRank IS NOT NULL
         CALL {
           WITH line
@@ -218,81 +291,122 @@ class InteractionsGraph(object):
         return result.data()
 
 class EcoAnalysis(object):
-    def __init__(self):
-        self.ig = InteractionGraph()
+    def __init__(self, interactiongraph=None):
+        from graphdatascience import GraphDataScience
+        self.ig = InteractionGraph() if interactiongraph is None else interactiongraph
         self.gds = GraphDataScience(
             'neo4j://neo4j:7687',
             auth=('neo4j', self.ig._password)
         )
-#node_projection = ['Taxon']
-#relationship_projection = {'eats': {'orientation': 'NATURAL'}}
-#result = gds.graph.project.estimate(node_projection, relationship_projection)
-#result['requiredMemory']
-#G, result = gds.graph.project("menu", node_projection, relationship_projection)
-#print(f"The projection took {result['projectMillis']} ms")
-#print(f"Graph '{G.name()}' node count: {G.node_count()}")
-#print(f"Graph '{G.name()}' node labels: {G.node_labels()}")
-#result = gds.fastRP.mutate.estimate(
-#    G,
-#    mutateProperty="embedding",
-#    randomSeed=42,
-#    embeddingDimension=4,
-#    #relationshipWeightProperty="amount",
-#    iterationWeights=[0.8, 1, 1, 1],
-#)
-#print(f"Required memory for running FastRP: {result['requiredMemory']}")
-#result = gds.fastRP.mutate(
-#    G,
-#    mutateProperty="embedding",
-#    randomSeed=42,
-#    embeddingDimension=4,
-#    #relationshipWeightProperty="amount",
-#    iterationWeights=[0.8, 1, 1, 1],
-#)
-#print(f"Number of embedding vectors produced: {result['nodePropertiesWritten']}")
 
-# result = gds.knn.write(
-#     G,
-#     topK=2,
-#     nodeProperties=["embedding"],
-#     randomSeed=42,
-#     concurrency=1,
-#     sampleRate=1.0,
-#     deltaThreshold=0.0,
-#     writeRelationshipType="SIMILAR",
-#     writeProperty="score",
-# )
+    def create_projection(self, name, node_projection=None, relationship_projection=None):
+        """Create graph data model (projection)"""
+        self.node_projection = ['Taxon'] if node_projection is None else node_projection
+        self.relationship_projection = {
+            'eats': {'orientation': 'NATURAL'}
+        } if relationship_projection is None else relationship_projection
+        result = self.gds.graph.project.estimate(
+            self.node_projection,
+            self.relationship_projection
+        )
+        print(result['requiredMemory'])
+        if input('Continue? ') != 'yes':
+            return
+        
+        G, result = self.gds.graph.project(
+            name, self.node_projection,
+            self.relationship_projection
+        )
+        print(f"The projection took {result['projectMillis']} ms")
+        print(f"Graph '{G.name()}' node count: {G.node_count()}")
+        print(f"Graph '{G.name()}' node labels: {G.node_labels()}")
+        try:
+            self.projections[name] = G
+        except AttributeError:
+            self.projections = {}
+            self.projections[name] = G
 
-# print(f"Relationships produced: {result['relationshipsWritten']}")
-# print(f"Nodes compared: {result['nodesCompared']}")
-# print(f"Mean similarity: {result['similarityDistribution']['mean']}")
+    def create_embedding(self, projection, embeddingDimension=4):
+        result = self.gds.fastRP.mutate.estimate(
+            self.projections[projection],
+            mutateProperty="embedding",
+            randomSeed=42,
+            embeddingDimension=embeddingDimension,
+            #relationshipWeightProperty="amount",
+            iterationWeights=[0.8, 1, 1, 1],
+        )
+        print(f"Required memory for running FastRP: {result['requiredMemory']}")
 
-#Exploring similar results
-#gds.run_cypher(
-#    """
-#        MATCH (t1:Taxon)-[r:SIMILAR]->(t2:Taxon)
-#        RETURN t1.name AS taxon1, t2.name AS taxon2, r.score AS similarity
-#        ORDER BY similarity DESCENDING, taxon1, taxon2
-#        LIMIT 5
-#    """
-#)
+        if input('Continue? ') != 'yes':
+            return
 
-#Get potential menu
-# gds.run_cypher(
-#     """
-#         MATCH (:Taxon {name: "Acronicta impleta"})-[:eats]->(t1:Taxon)
-#         WITH collect(t1) as dishes
-#         MATCH (:Taxon {name: "Orgyia definita"})-[:eats]->(t2:Taxon)
-#         WHERE not t2 in dishes
-#         RETURN t2.name as recommendation
-#     """
-# )
+        result = self.gds.fastRP.mutate(
+            self.projections[projection],
+            mutateProperty="embedding",
+            randomSeed=42,
+            embeddingDimension=embeddingDimension,
+            #relationshipWeightProperty="amount",
+            iterationWeights=[0.8, 1, 1, 1],
+        )
+        print(f"Number of embedding vectors produced: {result['nodePropertiesWritten']}")
+        
+        # Get embeddings
+        embeddings = self.gds.run_cypher(
+            f"""
+            CALL gds.graph.nodeProperty.stream('{projection}', 'embedding')
+            YIELD nodeId, propertyValue
+            RETURN gds.util.asNode(nodeId).name AS name, propertyValue AS embedding
+            ORDER BY embedding DESC LIMIT 100
+            """
+        )
+        return embeddings
+        
+    def predict_similars(self, projection):
+        result = self.gds.knn.write(
+            self.projections[projection],
+            topK=2,
+            nodeProperties=["embedding"],
+            randomSeed=42,
+            concurrency=1,
+            sampleRate=1.0,
+            deltaThreshold=0.0,
+            writeRelationshipType="SIMILAR",
+            writeProperty="score",
+        )
 
-# Get embeddings
-#CALL gds.graph.nodeProperty.stream('menu', 'embedding')
-#YIELD nodeId, propertyValue
-#RETURN gds.util.asNode(nodeId).name AS name, propertyValue AS embedding
-#ORDER BY embedding DESC LIMIT 10
+        print(f"Relationships produced: {result['relationshipsWritten']}")
+        print(f"Nodes compared: {result['nodesCompared']}")
+        print(f"Mean similarity: {result['similarityDistribution']['mean']}")
 
-# Remove our projection from the GDS graph catalog
-# G.drop()
+        #Exploring similar results
+        return self.gds.run_cypher(
+            """
+            MATCH (t1:Taxon)-[r:SIMILAR]->(t2:Taxon)
+            RETURN t1.name AS taxon1, t2.name AS taxon2, r.score AS similarity
+            ORDER BY similarity DESCENDING, taxon1, taxon2
+            LIMIT 5
+            """
+        )
+
+    def get_recommendations(self, projection):
+        #Get potential menu
+        # self.gds.run_cypher(
+        #     """
+        #         MATCH (:Taxon {name: "Acronicta impleta"})-[:eats]->(t1:Taxon)
+        #         WITH collect(t1) as dishes
+        #         MATCH (:Taxon {name: "Orgyia definita"})-[:eats]->(t2:Taxon)
+        #         WHERE not t2 in dishes
+        #         RETURN t2.name as recommendation
+        #     """
+        # )
+        pass
+
+    def drop_projection(self, projection):
+        # Remove projection from the GDS graph catalog
+        self.projections[projection].drop()
+
+# Triad analysis
+# ig.run_query("MATCH p=((n:species)-[]-(:species)-[]-(:species)-[]-(n)) RETURN p LIMIT 1")
+# triad_types = ig.run_query("MATCH (n:species)-[a]-(:species)-[b]-(:species)-[c]-(n) RETURN TYPE(a),TYPE(b),TYPE(c) LIMIT 1")
+# triad_types = pd.DataFrame(triad_types)
+# triad_types.sum(axis=1).value_counts()
