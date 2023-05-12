@@ -144,27 +144,34 @@ class InteractionsGraph(object):
     # graph loading methods
     def load_taxons(self):
         # Transactions requires implicit committing
+        # Last timeit: 1h 1min 57s
         q = '''
         LOAD CSV WITH HEADERS FROM 'file:///globi.tsv.gz' AS line FIELDTERMINATOR '\t'
         //WITH line LIMIT 10
         WITH line WHERE line.sourceTaxonRank IS NOT NULL AND line.targetTaxonRank IS NOT NULL
         CALL {
           WITH line
-          MERGE (source:Taxon {name: line.sourceTaxonName, rank: line.sourceTaxonRank})
+          MERGE (source:Taxon {name: line.sourceTaxonName})
           ON CREATE
-            SET source.ids = [line.sourceTaxonId]
+            SET source.ids = [line.sourceTaxonId],
+                source.rank = line.sourceTaxonRank
           ON MATCH
-            SET source.ids = source.ids + line.sourceTaxonId
-          MERGE (target:Taxon {name: line.targetTaxonName, rank: line.targetTaxonRank})
+            SET source.ids = CASE WHEN line.sourceTaxonId IN source.ids
+                THEN source.ids ELSE source.ids + line.sourceTaxonId END
+          MERGE (target:Taxon {name: line.targetTaxonName})
           ON CREATE
-            SET target.ids = [line.targetTaxonId]
+            SET target.ids = [line.targetTaxonId],
+                target.rank = line.targetTaxonRank
           ON MATCH
-            SET target.ids = target.ids + line.targetTaxonId
+            SET target.ids = CASE WHEN line.targetTaxonId IN target.ids
+                THEN target.ids ELSE target.ids + line.targetTaxonId END
         } IN TRANSACTIONS OF 5000 ROWS
         '''
+        # put rank in create step
         self.run_query(q)
 
     def load_taxon_labels(self):
+        # Last timeit: 1h 2min 9s
         q = '''
         LOAD CSV WITH HEADERS FROM 'file:///globi.tsv.gz' AS line FIELDTERMINATOR '\t'
         //WITH line LIMIT 10
@@ -185,6 +192,7 @@ class InteractionsGraph(object):
 
         
     def load_taxon_relationships(self):
+        # Last timeit: 1h 9min 22s
         q = '''
         LOAD CSV WITH HEADERS FROM 'file:///globi.tsv.gz' AS line FIELDTERMINATOR '\t'
         WITH line WHERE line.sourceTaxonRank IS NOT NULL AND line.targetTaxonRank IS NOT NULL
@@ -193,11 +201,15 @@ class InteractionsGraph(object):
           MATCH (s:Taxon {name: line.sourceTaxonName})
           MATCH (t:Taxon {name: line.targetTaxonName})
           WITH s, t, line
-          CALL apoc.create.relationship(s, line.interactionTypeName, NULL, t) YIELD rel
+          CALL apoc.merge.relationship(
+            s, line.interactionTypeName, NULL, {occurences: 0},
+            t, {}
+          ) YIELD rel SET rel.occurences = rel.occurences+1
           RETURN rel
         } IN TRANSACTIONS OF 5000 ROWS
         RETURN COUNT(rel)
         '''
+        # occurence id (not always), doi (publication), date, dataset (how it got into globi)
         with self.driver.session(database="neo4j") as session:
             session.run(q)
         # TIME started 10:34, ended 
