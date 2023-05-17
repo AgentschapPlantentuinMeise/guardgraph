@@ -5,8 +5,10 @@ import gzip
 import logging
 import warnings
 from itertools import count
+import pandas as pd
 from neo4j import GraphDatabase
 from neo4j.exceptions import Neo4jError
+from guardgraph.utils import download_file
 
 class InteractionsGraph(object):
     def __init__(self, password=None, passfile='/data/.neo4j_credentials', initialize_database=False):
@@ -24,12 +26,12 @@ class InteractionsGraph(object):
     def __del__(self):
         self.driver.close()
 
-    def run_query(self, q, database="neo4j", timeit=False):
+    def run_query(self, q, database="neo4j", timeit=False, **kwargs):
         "Run query directly through session (implicit commit)"
         with self.driver.session(database=database) as session:
             if timeit:
                 start = time.perf_counter()
-            result = session.run(q)
+            result = session.run(q, **kwargs)
             if timeit:
                 logging.info('Query took %s s', time.perf_counter()-start)
             return result.data()
@@ -82,7 +84,20 @@ class InteractionsGraph(object):
         self.load_taxons()
         self.load_taxon_labels()
         self.load_taxon_relationships()
-        
+
+    # retrieve files
+    def retrieve_data_files(self):
+        """Retrieve all required files for building up the graph"""
+        download_file(
+            'https://zenodo.org/record/7348355/files/interactions.tsv.gz',
+            '/data/globi'
+        )
+        self.prep_interaction_data_file()
+        download_file(
+            'https://zenodo.org/record/7348355/files/taxonCache.tsv.gz',
+            '/data/neo4j_import'
+        )
+    
     # prep_interaction_data
     def prep_interaction_data_file(self, interactions_file='/data/globi/interactions.tsv.gz'):
         """neo4j LOAD CSV has an issue with quotes
@@ -193,6 +208,7 @@ class InteractionsGraph(object):
         
     def load_taxon_relationships(self):
         # Last timeit: 1h 9min 22s
+        # No time difference whether setting only occurences or with ref doi
         q = '''
         LOAD CSV WITH HEADERS FROM 'file:///globi.tsv.gz' AS line FIELDTERMINATOR '\t'
         WITH line WHERE line.sourceTaxonRank IS NOT NULL AND line.targetTaxonRank IS NOT NULL
@@ -202,9 +218,11 @@ class InteractionsGraph(object):
           MATCH (t:Taxon {name: line.targetTaxonName})
           WITH s, t, line
           CALL apoc.merge.relationship(
-            s, line.interactionTypeName, NULL, {occurences: 0},
+            s, line.interactionTypeName, NULL,
+            {occurences: 0, references: []},
             t, {}
-          ) YIELD rel SET rel.occurences = rel.occurences+1
+          ) YIELD rel SET rel.occurences = rel.occurences+1,
+                          rel.references = rel.references+line.referenceDoi
           RETURN rel
         } IN TRANSACTIONS OF 5000 ROWS
         RETURN COUNT(rel)
@@ -303,6 +321,8 @@ class InteractionsGraph(object):
         return result.data()
 
 class EcoAnalysis(object):
+    # %pip install multimethod tqdm
+    # %pip install --no-deps graphdatascience
     def __init__(self, interactiongraph=None):
         from graphdatascience import GraphDataScience
         self.ig = InteractionGraph() if interactiongraph is None else interactiongraph
@@ -312,7 +332,19 @@ class EcoAnalysis(object):
         )
 
     def create_projection(self, name, node_projection=None, relationship_projection=None):
-        """Create graph data model (projection)"""
+        """Create graph data model (projection)
+
+        Example:
+          >>> ea = EcoAnalysis(ig)
+          >>> ea.create_projection(
+          ...     'test_projection',
+          ...     ['species','genus'],
+          ...     {
+          ...       'pollinates':{'properties':['occurences']},
+          ...       'eats':{'properties':['occurences']}
+          ...     }
+          ... )
+        """
         self.node_projection = ['Taxon'] if node_projection is None else node_projection
         self.relationship_projection = {
             'eats': {'orientation': 'NATURAL'}
@@ -344,7 +376,7 @@ class EcoAnalysis(object):
             mutateProperty="embedding",
             randomSeed=42,
             embeddingDimension=embeddingDimension,
-            #relationshipWeightProperty="amount",
+            relationshipWeightProperty="occurences",
             iterationWeights=[0.8, 1, 1, 1],
         )
         print(f"Required memory for running FastRP: {result['requiredMemory']}")
@@ -357,7 +389,7 @@ class EcoAnalysis(object):
             mutateProperty="embedding",
             randomSeed=42,
             embeddingDimension=embeddingDimension,
-            #relationshipWeightProperty="amount",
+            relationshipWeightProperty="occurences",
             iterationWeights=[0.8, 1, 1, 1],
         )
         print(f"Number of embedding vectors produced: {result['nodePropertiesWritten']}")
@@ -371,6 +403,33 @@ class EcoAnalysis(object):
             ORDER BY embedding DESC LIMIT 100
             """
         )
+        return embeddings
+
+    def get_embeddings(self, projection, species_list=None, plot=False):
+        """Get the embeddings for projection
+        optionally only for the species in species_list
+        """
+        if species_list:
+            embeddings = self.ig.run_query( #gds.run_cypher(
+            f"""
+            CALL gds.graph.nodeProperty.stream('{projection}', 'embedding')
+            YIELD nodeId, propertyValue
+            WITH gds.util.asNode(nodeId).name AS name, propertyValue AS embedding
+            WHERE name IN $species_list
+            RETURN name, embedding
+            ORDER BY embedding
+            """, species_list=species_list
+            )
+            embeddings = pd.DataFrame(embeddings)
+        else:
+            embeddings = self.gds.run_cypher(
+            f"""
+            CALL gds.graph.nodeProperty.stream('{projection}', 'embedding')
+            YIELD nodeId, propertyValue
+            WITH gds.util.asNode(nodeId).name AS name, propertyValue AS embedding
+            RETURN name, embedding
+            """
+            )
         return embeddings
         
     def predict_similars(self, projection):

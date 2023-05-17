@@ -23,7 +23,9 @@ setup(name='guardgraph',
       install_requires=[
           'flask',
           'neo4j',
-          'pandas'
+          'pandas',
+          'requests',
+          'matplotlib'
       ],
       extras_require={
           'documentation': ['Sphinx']
