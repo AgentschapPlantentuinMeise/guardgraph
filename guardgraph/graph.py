@@ -231,7 +231,31 @@ class InteractionsGraph(object):
         with self.driver.session(database="neo4j") as session:
             session.run(q)
         # TIME started 10:34, ended 
-        
+
+    def load_taxon_tree(self):
+        q = '''
+        LOAD CSV WITH HEADERS FROM 'file:///taxonCache.tsv.gz' AS line FIELDTERMINATOR '\t'
+        WITH line
+        //SKIP 600000 LIMIT 400000
+        WHERE line.rank = 'species'
+        AND line.genusName IS NOT NULL
+        AND line.familyName IS NOT NULL
+        CALL {
+          WITH line
+          MERGE (s:species {name: line.name})
+          MERGE (g:genus {name: line.genusName})
+          MERGE (f:family {name: line.familyName})
+          //MERGE (o:order {name: line.orderName})
+          //MERGE (c:class {name: line.className})
+          //MERGE (p:phylumId {name: line.phylumName})
+          //MERGE (k:kingdom {name: line.kingdomName})
+          MERGE (s)-[:memberOf]->(g)-[:memberOf]->(f)
+          RETURN s
+        } IN TRANSACTIONS OF 5000 ROWS
+        RETURN COUNT(s)
+        '''
+        self.run_query(q)
+    
     def load_interaction_data(self, interactions_file='/data/globi/interactions.tsv.gz', start=0, max_entries=10, batch_size=1, cypher_batched=True):
         if max_entries: entries_count = count()
         intergz = gzip.open(interactions_file)
@@ -335,13 +359,15 @@ class EcoAnalysis(object):
         """Create graph data model (projection)
 
         Example:
+          >>> ig.run_query('MATCH ()-[r:memberOf]->() SET r.occurences = 1 RETURN COUNT(r)')
           >>> ea = EcoAnalysis(ig)
           >>> ea.create_projection(
           ...     'test_projection',
           ...     ['species','genus'],
           ...     {
           ...       'pollinates':{'properties':['occurences']},
-          ...       'eats':{'properties':['occurences']}
+          ...       'eats':{'properties':['occurences']},
+          ...       'memberOf':{'properties':['occurences']}
           ...     }
           ... )
         """
@@ -481,3 +507,54 @@ class EcoAnalysis(object):
 # triad_types = ig.run_query("MATCH (n:species)-[a]-(:species)-[b]-(:species)-[c]-(n) RETURN TYPE(a),TYPE(b),TYPE(c) LIMIT 1")
 # triad_types = pd.DataFrame(triad_types)
 # triad_types.sum(axis=1).value_counts()
+
+"""
+species_of_interest = [
+'Hydrocharis laevigata',
+'Amynthas agrestis', #-> genus level
+'Procambarus acutus',
+'Castor canadensis',
+'Lycium ferocissimum',
+'Potamocorbula amurensis'
+]
+
+for s in species_of_interest:
+          print(s,                                                           
+          ig.run_query('MATCH (n:species {name:"'+s+'"})-[r]-() RETURN DISTINCT r.references')                                                       
+          )
+
+# At genus level
+for s in species_of_interest:
+    print(s,
+    ig.run_query('MATCH (n:species)-[r]-() WHERE n.name STARTS WITH "'+s
+    .split()[0]+'" RETURN COUNT(r)')   )
+
+# substract refuted interactions to clean database
+In [325]: for s in species_of_interest:
+     ...:     print(s,
+     ...:     ig.run_query('MATCH (n:species)-[r]-() WHERE n.name STARTS WITH "'+s
+     ...: +'" WITH r.references AS refs UNWIND refs AS ref WITH DISTINCT ref RETUR
+     ...: N COLLECT(ref)')
+     ...:     )
+     ...:                                                                        
+Hydrocharis laevigata [{'COLLECT(ref)': []}]
+Amynthas agrestis [{'COLLECT(ref)': []}]
+Procambarus acutus [{'COLLECT(ref)': []}]
+Castor canadensis [{'COLLECT(ref)': ['10.1002/ecy.1680', '10.1111/geb.13296', '10.1371/journal.pone.0106264', '10.5281/zenodo.4435128', '10.15468/tmxd7n', '10.15468/ou1lf2', '10.15468/5o0fct', '10.1093/nar/gkp832']}]                             
+Lycium ferocissimum [{'COLLECT(ref)': []}]
+Potamocorbula amurensis [{'COLLECT(ref)': []}]
+
+In [326]: for s in species_of_interest:
+     ...:     print(s,
+     ...:     ig.run_query('MATCH (n:species)-[r]-() WHERE n.name STARTS WITH "'+s
+     ...: .split()[0]+'" WITH r.references AS refs UNWIND refs AS ref WITH DISTINC
+     ...: T ref RETURN COLLECT(ref)')
+     ...:     )
+     ...:                                                                        
+Hydrocharis laevigata [{'COLLECT(ref)': ['10.1111/j.1469-7998.1991.tb06033.x']}]
+Amynthas agrestis [{'COLLECT(ref)': ['10.1002/ecy.1680']}]
+Procambarus acutus [{'COLLECT(ref)': ['10.1002/ecy.1680', '10.3897/BDJ.8.e49943', '10.1051/kmae:2001011']}]                                                        
+Castor canadensis [{'COLLECT(ref)': ['10.1002/ecy.1680', '10.1111/geb.13296', '10.1371/journal.pone.0106264', '10.5281/zenodo.4435128', '10.15468/tmxd7n', '10.15468/ou1lf2', '10.15468/5o0fct', '10.1093/nar/gkp832', '10.1101/2020.05.22.111344v1', '10.11118/actaun200856040289']}]                                                 
+Lycium ferocissimum [{'COLLECT(ref)': []}]
+Potamocorbula amurensis [{'COLLECT(ref)': []}]
+"""

@@ -25,7 +25,8 @@ setup(name='guardgraph',
           'neo4j',
           'pandas',
           'requests',
-          'matplotlib'
+          'matplotlib',
+          'tqdm'
       ],
       extras_require={
           'documentation': ['Sphinx']
