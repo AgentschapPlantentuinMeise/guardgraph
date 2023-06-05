@@ -1,5 +1,6 @@
 import re
 import os
+import json
 import requests
 
 def download_file(url, destination_folder='/data', check_file=True, progress_bar=False):
@@ -32,3 +33,18 @@ def download_file(url, destination_folder='/data', check_file=True, progress_bar
                 #if chunk: 
                 out.write(chunk)
     return filename
+
+def globi_web_cypher(query):
+    """Reference: https://github.com/ropensci/rglobi/blob/HEAD/R/rglobi.R
+    Available labels: Taxon (41818247), Reference (11023639)
+    """
+    response = requests.post(
+        'https://neo4j.globalbioticinteractions.org/db/data/cypher',
+        data=json.dumps(
+            {'query':query}
+        ), headers={
+            'Accept':'application/json',
+            'Content-Type':'application/json'
+        }
+    )
+    return json.loads(response.content)

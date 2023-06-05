@@ -1,3 +1,4 @@
+import io
 import os
 import re
 import time
@@ -88,11 +89,18 @@ class InteractionsGraph(object):
     # retrieve files
     def retrieve_data_files(self):
         """Retrieve all required files for building up the graph"""
+        # Interactions
         download_file(
             'https://zenodo.org/record/7348355/files/interactions.tsv.gz',
             '/data/globi'
         )
         self.prep_interaction_data_file()
+        # Refuted interactions
+        download_file(
+            'https://zenodo.org/record/7348355/files/refuted-interactions.tsv.gz',
+            '/data/neo4j_import'
+        )
+        # Data for taxon tree
         download_file(
             'https://zenodo.org/record/7348355/files/taxonCache.tsv.gz',
             '/data/neo4j_import'
@@ -121,6 +129,97 @@ class InteractionsGraph(object):
                     #gz_out.write(pattern.sub('', line))
                     next(c)
         print(c)
+
+    def prep_admin_import_files(self, progress_bar=False):
+        interactions_file = '/data/globi/interactions.tsv.gz'
+        # Used interaction data fields
+        sourceTaxonId = 0
+        ## Properties
+        sourceTaxonName = 2
+        sourceTaxonRank = 3
+        sourceTaxonKingdomName = 21
+        sourceOccurenceId = 24
+        # Relationship
+        interactionTypeName = 38
+        decimalLatitude = 78
+        decimalLongitude = 79
+        localityId = 80
+        localityName = 81
+        eventDate = 82
+        referenceDoi = 85
+        sourceCitation = 87
+        # Target
+        targetTaxonId = 40
+        ## Properties
+        targetTaxonName = 42
+        targetTaxonRank = 43
+        targetTaxonKingdomName = 61
+        targetOccurenceId = 64
+        # Processing
+        with gzip.open(interactions_file, 'rt') as intergz:
+            with gzip.open('/data/neo4j_import/globi_nodes.csv.gz', 'wt') as nodes_out, gzip.open('/data/neo4j_import/globi_edges.csv.gz', 'wt') as edges_out:
+                # Write headers
+                nodes_out.write('taxonId:ID;name;rank;kingdom;:LABEL')
+                edges_out.write(':START_ID;eventDate;decimalLatitude;decimalLongitude;sourceCitation;referenceDoi;:TYPE')
+                if progress_bar:
+                    import tqdm
+                    try:
+                        file_size = int(
+                            os.getxattr(
+                                interactions_file,
+                                'user.uncompressed_size'
+                        ))
+                    except OSError:
+                        file_size = intergz.seek(0, io.SEEK_END)
+                        intergz.seek(0)
+                        os.setxattr(
+                            interactions_file,
+                            'user.uncompressed_size',
+                            bytes(str(file_size),'ascii')
+                        )
+                    progbar = tqdm.tqdm(
+                        total=file_size,
+                        unit='mb',
+                        unit_scale=1/(1024**2),
+                        bar_format='{desc}: {percentage:3.0f}%|{bar}| {n:.3f}/{total:.3f} [{elapsed}<{remaining}, ' '{rate_fmt}{postfix}]'
+                    )
+                skipped_lines = 0
+                skipped_types = {}
+                registered_nodes = set()
+                for line in intergz:
+                    l = line.strip().split('\t')
+                    if not l[sourceTaxonRank] or not l[targetTaxonRank]:
+                        skipped_lines += 1
+                        try: skipped_types[l[interactionTypeName]]+=1
+                        except KeyError: skipped_types[l[interactionTypeName]]=1
+                        #if len(skipped) > 10: break
+                        continue
+                    if l[sourceTaxonId] not in registered_nodes:
+                        nodes_out.write(';'.join([
+                            l[sourceTaxonId], l[sourceTaxonName],
+                            l[sourceTaxonKingdomName],
+                            'Taxon|'+l[sourceTaxonRank]
+                        ]))
+                        registered_nodes.add(l[sourceTaxonId])
+                    if l[targetTaxonId] not in registered_nodes:
+                        nodes_out.write(';'.join([
+                            l[targetTaxonId], l[targetTaxonName],
+                            l[targetTaxonKingdomName],
+                            'Taxon|'+l[targetTaxonRank]
+                        ]))
+                        registered_nodes.add(l[targetTaxonId])
+                    edges_out.write(';'.join([
+                        l[sourceTaxonId], l[eventDate], l[decimalLatitude],
+                        l[decimalLongitude],l[sourceCitation],
+                        l[referenceDoi], l[interactionTypeName]
+                    ]))
+                    if progress_bar:
+                        progbar.update(len(line))
+                if progress_bar:
+                    progbar.close()
+                print('Skipped interaction lines:', skipped_lines, skipped_types)
+                print('Nodes added: ', len(registered_nodes))
+                #return skipped
 
     @staticmethod
     def prep_interaction_data_line(line):
@@ -219,18 +318,18 @@ class InteractionsGraph(object):
           WITH s, t, line
           CALL apoc.merge.relationship(
             s, line.interactionTypeName, NULL,
-            {occurences: 0, references: []},
+            {occurences: 0, references: [], studies: []},
             t, {}
           ) YIELD rel SET rel.occurences = rel.occurences+1,
-                          rel.references = rel.references+line.referenceDoi
+                          rel.references = rel.references+line.referenceDoi,
+                          rel.studies = rel.studies+line.sourceCitation
+        // localityName, decimalLatituted, decimalLongitude, eventDate
           RETURN rel
         } IN TRANSACTIONS OF 5000 ROWS
         RETURN COUNT(rel)
         '''
-        # occurence id (not always), doi (publication), date, dataset (how it got into globi)
-        with self.driver.session(database="neo4j") as session:
-            session.run(q)
-        # TIME started 10:34, ended 
+        # occurence id (not always), dataset (how it got into globi)
+        self.run_query(q)
 
     def load_taxon_tree(self):
         q = '''
@@ -260,7 +359,8 @@ class InteractionsGraph(object):
         if max_entries: entries_count = count()
         intergz = gzip.open(interactions_file)
         header = intergz.readline().decode().strip().split('\t')
-        print(header)
+        print(list(enumerate(header)))
+        raise DeprecationWarning
         batch = []
         for line in intergz:
             current_entry = next(entries_count)
