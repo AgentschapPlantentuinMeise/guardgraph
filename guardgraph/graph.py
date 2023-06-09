@@ -3,13 +3,14 @@ import os
 import re
 import time
 import gzip
+import shelve
 import logging
 import warnings
 from itertools import count
 import pandas as pd
 from neo4j import GraphDatabase
 from neo4j.exceptions import Neo4jError
-from guardgraph.utils import download_file
+from guardgraph.utils import download_file, Sorter
 
 class InteractionsGraph(object):
     def __init__(self, password=None, passfile='/data/.neo4j_credentials', initialize_database=False):
@@ -131,6 +132,14 @@ class InteractionsGraph(object):
         print(c)
 
     def prep_admin_import_files(self, progress_bar=False):
+        """
+        neo4j-admin database import full --delimiter='\t' --array-delimiter="|" --quote='"' --nodes=import/globi_nodes.tsv.gz --relationships=import/globi_edges.tsv.gz --overwrite-destination neo4j
+
+        check no:match identifiers
+        check the ones that have 2 words, 3 words or 1 word
+
+        prep refutations
+        """
         interactions_file = '/data/globi/interactions.tsv.gz'
         # Used interaction data fields
         sourceTaxonId = 0
@@ -156,11 +165,12 @@ class InteractionsGraph(object):
         targetTaxonKingdomName = 61
         targetOccurenceId = 64
         # Processing
+        sorter = Sorter(output_dir='/data/sorting')
         with gzip.open(interactions_file, 'rt') as intergz:
-            with gzip.open('/data/neo4j_import/globi_nodes.csv.gz', 'wt') as nodes_out, gzip.open('/data/neo4j_import/globi_edges.csv.gz', 'wt') as edges_out:
+            with gzip.open('/data/neo4j_import/globi_nodes.tsv.gz', 'wt') as nodes_out, gzip.open('/data/neo4j_import/globi_edges.tsv.gz', 'wt') as edges_out:
                 # Write headers
-                nodes_out.write('taxonId:ID;name;rank;kingdom;:LABEL')
-                edges_out.write(':START_ID;eventDate;decimalLatitude;decimalLongitude;sourceCitation;referenceDoi;:TYPE')
+                nodes_out.write('taxonId:ID\tname\trank\tkingdom\t:LABEL\n')
+                edges_out.write(':START_ID\t:END_ID\teventDate\tdecimalLatitude\tdecimalLongitude\tsourceCitation\treferenceDoi\t:TYPE\n')
                 if progress_bar:
                     import tqdm
                     try:
@@ -195,31 +205,97 @@ class InteractionsGraph(object):
                         #if len(skipped) > 10: break
                         continue
                     if l[sourceTaxonId] not in registered_nodes:
-                        nodes_out.write(';'.join([
+                        nodes_out.write('\t'.join([
                             l[sourceTaxonId], l[sourceTaxonName],
                             l[sourceTaxonKingdomName],
                             'Taxon|'+l[sourceTaxonRank]
-                        ]))
+                        ])+'\n')
                         registered_nodes.add(l[sourceTaxonId])
                     if l[targetTaxonId] not in registered_nodes:
-                        nodes_out.write(';'.join([
+                        nodes_out.write('\t'.join([
                             l[targetTaxonId], l[targetTaxonName],
                             l[targetTaxonKingdomName],
                             'Taxon|'+l[targetTaxonRank]
-                        ]))
+                        ])+'\n')
                         registered_nodes.add(l[targetTaxonId])
-                    edges_out.write(';'.join([
-                        l[sourceTaxonId], l[eventDate], l[decimalLatitude],
-                        l[decimalLongitude],l[sourceCitation],
+                    edge_line = '\t'.join([
+                        l[sourceTaxonId], l[targetTaxonId],
+                        l[eventDate], l[decimalLatitude],
+                        l[decimalLongitude],l[sourceCitation], #.replace(';',','),
                         l[referenceDoi], l[interactionTypeName]
-                    ]))
+                    ])+'\n'
+                    edges_out.write(edge_line)
+                    sorter.buckit(
+                        (l[sourceTaxonId], l[targetTaxonId],
+                         l[interactionTypeName]), edge_line
+                    )
                     if progress_bar:
                         progbar.update(len(line))
                 if progress_bar:
                     progbar.close()
                 print('Skipped interaction lines:', skipped_lines, skipped_types)
                 print('Nodes added: ', len(registered_nodes))
-                #return skipped
+                print('Closing tmp bucket files')
+                sorter.close()
+        print('Sorting buckets')
+        sorted_lines = sorter.sort_buckets(
+            '/data/sorted_globi_edges.tsv.gz',
+            progress_bar=progress_bar
+        )
+        print('Merging edges')
+        with gzip.open('/data/sorted_globi_edges.tsv.gz', 'rt') as edges_sorted:
+            with gzip.open('/data/neo4j_import/globi_merged_edges.tsv.gz', 'wt') as edges_out:
+                edges_out.write(':START_ID\t:END_ID\teventDate\tdecimalLatitude\tdecimalLongitude\tsourceCitation\treferenceDoi\toccurences\t:TYPE\n')
+                current_label = None
+                edges_count = 0
+                for line in (tqdm.tqdm(edges_sorted, total=sorted_lines) if progress_bar else edges_sorted):
+                    l = line.strip().split('\t')
+                    if l[0] == current_label:
+                        occurences +=1
+                        if len(edge_set) < 100 and type(edge_set) is list:
+                            # this extra logic is needed due to invasion of
+                            # homo sapiens - sars-cov2 interaction data
+                            edge_set.append(l[1:])
+                        elif len(edge_set) == 100 and type(edge_set) is list:
+                            edge_set = {tuple(e) for e in edge_set}
+                            edge_set.add(tuple(l[1:]))
+                        else:
+                            edge_set.add(tuple(l[1:]))
+                    elif current_label is None:
+                        current_label = l[0]
+                        edge_set = [l[1:]]
+                        occurences = 1
+                    else:
+                        # Write out edge set
+                        edge_line = '\t'.join([
+                            l[1], l[2], # source and target ID
+                            '|'.join({e[2] for e in edge_set}), # eventDate
+                            '|'.join([e[3] for e in edge_set]), # decimalLatitude
+                            '|'.join([e[4] for e in edge_set]), # decimalLongitude
+                            '|'.join({e[5] for e in edge_set}), # sourceCitation
+                            '|'.join({e[6] for e in edge_set}), # referenceDoi
+                            str(occurences), # occurences
+                            l[8] # interactionTypeName
+                        ])+'\n'
+                        edges_out.write(edge_line)
+                        edges_count +=1
+                        # Set new edge set
+                        current_label = l[0]
+                        edge_set = [l[1:]]
+                        occurences = 1
+                # Add last entry
+                edge_line = '\t'.join([
+                    l[1], l[2], # source and target ID
+                    '|'.join({e[2] for e in edge_set}), # eventDate
+                    '|'.join([e[3] for e in edge_set]), # decimalLatitude
+                    '|'.join([e[4] for e in edge_set]), # decimalLongitude
+                    '|'.join({e[5] for e in edge_set}), # sourceCitation
+                    '|'.join({e[6] for e in edge_set}), # referenceDoi
+                    str(occurences), # occurences
+                    l[8] # interactionTypeName
+                ])+'\n'
+                edges_out.write(edge_line)
+                print(edges_count+1, 'merged edges written to file')
 
     @staticmethod
     def prep_interaction_data_line(line):
