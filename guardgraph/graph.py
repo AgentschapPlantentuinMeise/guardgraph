@@ -133,8 +133,10 @@ class InteractionsGraph(object):
 
     def prep_admin_import_files(self, progress_bar=False):
         """
-        neo4j-admin database import full --delimiter='\t' --array-delimiter="|" --quote='"' --nodes=import/globi_nodes.tsv.gz --relationships=import/globi_edges.tsv.gz --overwrite-destination neo4j
+        neo4j-admin database import full --delimiter='\t' --array-delimiter="|" --quote='"' --nodes=import/globi_nodes.tsv.gz --relationships=import/globi_merged_edges.tsv.gz --overwrite-destination neo4j
 
+        TIME: 36m for import after files were prepared with this function
+        
         check no:match identifiers
         check the ones that have 2 words, 3 words or 1 word
 
@@ -167,9 +169,10 @@ class InteractionsGraph(object):
         # Processing
         sorter = Sorter(output_dir='/data/sorting')
         with gzip.open(interactions_file, 'rt') as intergz:
+            headers = intergz.readline()
             with gzip.open('/data/neo4j_import/globi_nodes.tsv.gz', 'wt') as nodes_out, gzip.open('/data/neo4j_import/globi_edges.tsv.gz', 'wt') as edges_out:
                 # Write headers
-                nodes_out.write('taxonId:ID\tname\trank\tkingdom\t:LABEL\n')
+                nodes_out.write('taxonId:ID\tname\tkingdom\t:LABEL\n')
                 edges_out.write(':START_ID\t:END_ID\teventDate\tdecimalLatitude\tdecimalLongitude\tsourceCitation\treferenceDoi\t:TYPE\n')
                 if progress_bar:
                     import tqdm
@@ -297,6 +300,112 @@ class InteractionsGraph(object):
                 edges_out.write(edge_line)
                 print(edges_count+1, 'merged edges written to file')
 
+    def prep_taxontree_admin_import_files(self, up2rank=3, progress_bar=False):
+        """Prepares taxon tree node and edge files for inclusion in neo4j db
+        `prep_admin_import_files` must have run before as the node file
+        generated is used to check wich tree nodes need to be added.
+
+        # Incremental not yet working -> no batch importers found
+         neo4j-admin database import incremental --delimiter='\t' --array-delimiter="|" --quote='"' --nodes=import/taxontree_nodes.tsv.gz --relationships=import/taxontree_edges.tsv.gz --force neo4j
+
+        # Full prep
+        neo4j-admin database import full --delimiter='\t' --array-delimiter="|" --quote='"' --nodes=import/globi_nodes.tsv.gz --nodes=import/taxontree_nodes.tsv.gz --relationships=import/globi_merged_edges.tsv.gz --relationships=import/taxontree_edges.tsv.gz --overwrite-destination neo4j
+
+        # After full prep neo4j needs to be restarted
+        
+        Args:
+          up2rank (int): Integer that specifies up to which rank tree links
+            will be included. E.g. `3` up to and including family links but not
+            order; `4` up to and including order links but not class
+        """
+        # configuration
+        taxon_ranks2include = {
+            'species', 'genus',
+            'subspecies', 'variety', 'form', 'strain', 'cultivar'
+        }
+        # nodes in neo4j db
+        with gzip.open('/data/neo4j_import/globi_nodes.tsv.gz', 'rt') as inodes:
+            inodes.readline()
+            nodes = {
+                line[:line.index('\t')]
+                for line in inodes
+            }
+        edges = set()
+        with gzip.open('/data/neo4j_import/taxonCache.tsv.gz','rt') as taxoncache, gzip.open('/data/neo4j_import/taxontree_nodes.tsv.gz', 'wt') as nodes_out, gzip.open('/data/neo4j_import/taxontree_edges.tsv.gz', 'wt') as edges_out:
+            # Write headers
+            nodes_out.write('taxonId:ID\tname\t:LABEL\n')
+            edges_out.write(':START_ID\t:END_ID\trank\t:TYPE\n')
+            if progress_bar:
+                import tqdm
+                try:
+                    file_size = int(
+                        os.getxattr(
+                            taxoncache.name,
+                            'user.uncompressed_size'
+                    ))
+                except OSError:
+                    file_size = taxoncache.seek(0, io.SEEK_END)
+                    taxoncache.seek(0)
+                    os.setxattr(
+                        taxoncache.name,
+                        'user.uncompressed_size',
+                        bytes(str(file_size),'ascii')
+                    )
+                progbar = tqdm.tqdm(
+                    total=file_size,
+                    unit='mb',
+                    unit_scale=1/(1024**2),
+                    bar_format='{desc}: {percentage:3.0f}%|{bar}| {n:.3f}/{total:.3f} [{elapsed}<{remaining}, ' '{rate_fmt}{postfix}]'
+                )
+            # Header
+            header = taxoncache.readline()
+            if progress_bar:
+                progbar.update(len(header))
+            header = header.strip().split('\t')
+            ranks2include = header[7:-2][:up2rank*2]
+            for line in taxoncache:
+                if progress_bar:
+                        progbar.update(len(line))
+                l = line.strip('\n').split('\t')
+                if (
+                    l[2] not in taxon_ranks2include # not interested in rank
+                    or l[0] not in nodes # interaction data was not included
+                ):
+                    continue
+                if l[2] not in ('species', 'genus'):
+                    # For sub species ranks include link with species
+                    if not l[0] or not l[8]: continue
+                    if l[8] not in nodes:
+                        nodes_out.write(f"{l[8]}\t{l[7]}\tspecies|MissingLink\n")
+                        nodes.add(l[8])
+                    edgekey = l[0]+l[8]
+                    if edgekey not in edges:
+                        edges_out.write(f"{l[0]}\t{l[8]}\tsubspecies\tMemberOf\n")
+                        edges.add(edgekey)
+                # Species and upwards
+                links2include = l[7:-2][:up2rank*2]
+                # Add nodes if necessary
+                for level in range(up2rank):
+                    ni = links2include[(level*2)+1] #node id
+                    nn = links2include[level*2] #node name
+                    nr = ranks2include[level*2][:-4] #node rank
+                    if ni and ni not in nodes:
+                        nodes_out.write(f"{ni}\t{nn}\t{nr}|MissingLink\n")
+                        nodes.add(ni)
+                # Add edge if necessary
+                for level in range(up2rank-1):
+                    si = links2include[(level*2)+1] #start id
+                    sr = ranks2include[level*2][:-4] #start rank
+                    ei = links2include[((level+1)*2)+1] #end id
+                    er = ranks2include[(level+1)*2][:-4] #en rank
+                    edgekey=si+ei
+                    if si and ei and edgekey not in edges:
+                        edges_out.write(f"{si}\t{ei}\t{sr}2{er}\tMemberOf\n")
+                        edges.add(edgekey)
+                    
+            if progress_bar:
+                    progbar.close()
+
     @staticmethod
     def prep_interaction_data_line(line):
         line = line.decode().strip().split('\t')
@@ -333,6 +442,7 @@ class InteractionsGraph(object):
             
     # graph loading methods
     def load_taxons(self):
+        # DEPRECATED -> faster with full python prep of files for offline loading
         # Transactions requires implicit committing
         # Last timeit: 1h 1min 57s
         q = '''
@@ -361,6 +471,7 @@ class InteractionsGraph(object):
         self.run_query(q)
 
     def load_taxon_labels(self):
+        # DEPRECATED
         # Last timeit: 1h 2min 9s
         q = '''
         LOAD CSV WITH HEADERS FROM 'file:///globi.tsv.gz' AS line FIELDTERMINATOR '\t'
@@ -382,6 +493,7 @@ class InteractionsGraph(object):
 
         
     def load_taxon_relationships(self):
+        # DEPRECATED
         # Last timeit: 1h 9min 22s
         # No time difference whether setting only occurences or with ref doi
         q = '''
