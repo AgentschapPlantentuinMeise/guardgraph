@@ -19,6 +19,9 @@ RUN apt install -y -V libarrow-flight-dev
 # https://arrow.apache.org/docs/developers/guide/step_by_step/building.html
 # https://arrow.apache.org/docs/developers/python.html#build-pyarrow
 RUN PYARROW_WITH_FLIGHT=1 pip install --no-cache-dir pyarrow
+# scikit-learn
+RUN apt-get install build-essential gfortran libopenblas-dev
+# Guarden code
 RUN mkdir /repos
 RUN cd /repos && git clone https://github.com/neo4j/graph-data-science-client.git
 #graphdatascience

@@ -12,6 +12,16 @@ To run this project:
 When start-up is completed, visit http://localhost:8000/ 
 To stop the application, run `docker compose down`
 
+If neo4j container was not properly shutdown, the lock file needs to
+be removed `rm ~/data/gg/databases/store_lock` for a succesfull
+startup.
+
+Sometimes this is not sufficient, and you need to remove any neo4j
+container:
+
+    NEO4J=$(docker container ps -a | grep neo4j | cut -f1 -d' ')
+    docker container rm $NEO4J
+
 ## Development notes
 
     docker ps -a # to see container id of python container

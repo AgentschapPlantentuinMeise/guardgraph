@@ -7,6 +7,7 @@ import shelve
 import logging
 import warnings
 from itertools import count
+from functools import cached_property
 import pandas as pd
 from neo4j import GraphDatabase
 from neo4j.exceptions import Neo4jError
@@ -109,7 +110,8 @@ class InteractionsGraph(object):
     
     # prep_interaction_data
     def prep_interaction_data_file(self, interactions_file='/data/globi/interactions.tsv.gz'):
-        """neo4j LOAD CSV has an issue with quotes
+        """DEPRECATED use `prep_admin_import_files`
+        neo4j LOAD CSV has an issue with quotes
         hence they are removed and the file is written
         to the location were neo4j can find it
 
@@ -149,7 +151,7 @@ class InteractionsGraph(object):
         sourceTaxonName = 2
         sourceTaxonRank = 3
         sourceTaxonKingdomName = 21
-        sourceOccurenceId = 24
+        sourceOccurrenceId = 24
         # Relationship
         interactionTypeName = 38
         decimalLatitude = 78
@@ -165,7 +167,7 @@ class InteractionsGraph(object):
         targetTaxonName = 42
         targetTaxonRank = 43
         targetTaxonKingdomName = 61
-        targetOccurenceId = 64
+        targetOccurrenceId = 64
         # Processing
         sorter = Sorter(output_dir='/data/sorting')
         with gzip.open(interactions_file, 'rt') as intergz:
@@ -248,13 +250,13 @@ class InteractionsGraph(object):
         print('Merging edges')
         with gzip.open('/data/sorted_globi_edges.tsv.gz', 'rt') as edges_sorted:
             with gzip.open('/data/neo4j_import/globi_merged_edges.tsv.gz', 'wt') as edges_out:
-                edges_out.write(':START_ID\t:END_ID\teventDate\tdecimalLatitude\tdecimalLongitude\tsourceCitation\treferenceDoi\toccurences\t:TYPE\n')
+                edges_out.write(':START_ID\t:END_ID\teventDate\tdecimalLatitude:float[]\tdecimalLongitude:float[]\tsourceCitation\treferenceDoi\toccurrences:int\t:TYPE\n')
                 current_label = None
                 edges_count = 0
                 for line in (tqdm.tqdm(edges_sorted, total=sorted_lines) if progress_bar else edges_sorted):
                     l = line.strip().split('\t')
                     if l[0] == current_label:
-                        occurences +=1
+                        occurrences +=1
                         if len(edge_set) < 100 and type(edge_set) is list:
                             # this extra logic is needed due to invasion of
                             # homo sapiens - sars-cov2 interaction data
@@ -267,17 +269,17 @@ class InteractionsGraph(object):
                     elif current_label is None:
                         current_label = l[0]
                         edge_set = [l[1:]]
-                        occurences = 1
+                        occurrences = 1
                     else:
                         # Write out edge set
                         edge_line = '\t'.join([
                             l[1], l[2], # source and target ID
-                            '|'.join({e[2] for e in edge_set}), # eventDate
-                            '|'.join([e[3] for e in edge_set]), # decimalLatitude
-                            '|'.join([e[4] for e in edge_set]), # decimalLongitude
-                            '|'.join({e[5] for e in edge_set}), # sourceCitation
-                            '|'.join({e[6] for e in edge_set}), # referenceDoi
-                            str(occurences), # occurences
+                            '|'.join({e[2] for e in edge_set if e[2]}), # eventDate
+                            '|'.join([e[3] for e in edge_set if e[3]]), # decimalLatitude
+                            '|'.join([e[4] for e in edge_set if e[4]]), # decimalLongitude
+                            '|'.join({e[5] for e in edge_set if e[5]}), # sourceCitation
+                            '|'.join({e[6] for e in edge_set if e[6]}), # referenceDoi
+                            str(occurrences), # occurrences
                             l[8] # interactionTypeName
                         ])+'\n'
                         edges_out.write(edge_line)
@@ -285,7 +287,7 @@ class InteractionsGraph(object):
                         # Set new edge set
                         current_label = l[0]
                         edge_set = [l[1:]]
-                        occurences = 1
+                        occurrences = 1
                 # Add last entry
                 edge_line = '\t'.join([
                     l[1], l[2], # source and target ID
@@ -294,12 +296,38 @@ class InteractionsGraph(object):
                     '|'.join([e[4] for e in edge_set]), # decimalLongitude
                     '|'.join({e[5] for e in edge_set}), # sourceCitation
                     '|'.join({e[6] for e in edge_set}), # referenceDoi
-                    str(occurences), # occurences
+                    str(occurrences), # occurrences
                     l[8] # interactionTypeName
                 ])+'\n'
                 edges_out.write(edge_line)
                 print(edges_count+1, 'merged edges written to file')
 
+    def remove_refuted_interactions(self):
+        """
+        neo4j-admin database import full --delimiter='\t' --array-delimiter="|" --quote='"' --nodes=import/globi_nodes.tsv.gz --relationships=import/globi_unrefuted_merged_edges.tsv.gz --overwrite-destination neo4j
+        """
+        import gzip
+        with gzip.open('/data/neo4j_import/refuted-interactions.tsv.gz', 'rt') as rr, gzip.open('/data/neo4j_import/globi_merged_edges.tsv.gz', 'rt') as edges_in:
+            with gzip.open('/data/neo4j_import/globi_unrefuted_merged_edges.tsv.gz', 'wt') as edges_out:
+                # Make refuted connections hash set
+                refuted_connections = set()
+                rr.readline() # header not used
+                for line in rr:
+                    l=line.strip('\n').split('\t')
+                    refuted_connections.add(hash((l[0],l[8],l[38])))
+                print('Refuted connections', len(refuted_connections))
+                # Copy header
+                edges_out.write(edges_in.readline())
+                # Filter merged edges
+                refuted_edges_count = 0
+                for line in edges_in:
+                    l=line.strip('\n').split('\t')
+                    if hash((l[0],l[1],l[-1])) in refuted_connections:
+                        refuted_edges_count+=1
+                    else:
+                        edges_out.write(line)
+                print('Removed edges', refuted_edges_count)
+                
     def prep_taxontree_admin_import_files(self, up2rank=3, progress_bar=False):
         """Prepares taxon tree node and edge files for inclusion in neo4j db
         `prep_admin_import_files` must have run before as the node file
@@ -413,7 +441,7 @@ class InteractionsGraph(object):
         ## Properties
         sourceTaxonName = line[2]
         sourceTaxonRank = line[3]
-        sourceOccurenceId = line[24]
+        sourceOccurrenceId = line[24]
         # Relationship
         interactionTypeName = line[38]
         decimalLatitude = line[78]
@@ -426,7 +454,7 @@ class InteractionsGraph(object):
         ## Properties
         targetTaxonName = line[42]
         targetTaxonRank = line[43]
-        targetOccurenceId = line[64]
+        targetOccurrenceId = line[64]
         processed_line = {
             'source_name':sourceTaxonName,
             'source_id': sourceTaxonId,
@@ -495,7 +523,7 @@ class InteractionsGraph(object):
     def load_taxon_relationships(self):
         # DEPRECATED
         # Last timeit: 1h 9min 22s
-        # No time difference whether setting only occurences or with ref doi
+        # No time difference whether setting only occurrences or with ref doi
         q = '''
         LOAD CSV WITH HEADERS FROM 'file:///globi.tsv.gz' AS line FIELDTERMINATOR '\t'
         WITH line WHERE line.sourceTaxonRank IS NOT NULL AND line.targetTaxonRank IS NOT NULL
@@ -506,9 +534,9 @@ class InteractionsGraph(object):
           WITH s, t, line
           CALL apoc.merge.relationship(
             s, line.interactionTypeName, NULL,
-            {occurences: 0, references: [], studies: []},
+            {occurrences: 0, references: [], studies: []},
             t, {}
-          ) YIELD rel SET rel.occurences = rel.occurences+1,
+          ) YIELD rel SET rel.occurrences = rel.occurrences+1,
                           rel.references = rel.references+line.referenceDoi,
                           rel.studies = rel.studies+line.sourceCitation
         // localityName, decimalLatituted, decimalLongitude, eventDate
@@ -516,7 +544,7 @@ class InteractionsGraph(object):
         } IN TRANSACTIONS OF 5000 ROWS
         RETURN COUNT(rel)
         '''
-        # occurence id (not always), dataset (how it got into globi)
+        # occurrence id (not always), dataset (how it got into globi)
         self.run_query(q)
 
     def load_taxon_tree(self):
@@ -544,6 +572,7 @@ class InteractionsGraph(object):
         self.run_query(q)
     
     def load_interaction_data(self, interactions_file='/data/globi/interactions.tsv.gz', start=0, max_entries=10, batch_size=1, cypher_batched=True):
+        # DEPRECATED
         if max_entries: entries_count = count()
         intergz = gzip.open(interactions_file)
         header = intergz.readline().decode().strip().split('\t')
@@ -632,6 +661,13 @@ class InteractionsGraph(object):
         result = tx.run(query)
         return result.data()
 
+    @cached_property
+    def relationships(self):
+        return {
+            r['relationshipType']
+            for r in self.run_query('CALL db.relationshipTypes();')
+        }
+
 class EcoAnalysis(object):
     # %pip install multimethod tqdm
     # %pip install --no-deps graphdatascience
@@ -647,15 +683,15 @@ class EcoAnalysis(object):
         """Create graph data model (projection)
 
         Example:
-          >>> ig.run_query('MATCH ()-[r:memberOf]->() SET r.occurences = 1 RETURN COUNT(r)')
+          >>> ig.run_query('MATCH ()-[r:memberOf]->() SET r.occurrences = 1 RETURN COUNT(r)')
           >>> ea = EcoAnalysis(ig)
           >>> ea.create_projection(
           ...     'test_projection',
           ...     ['species','genus'],
           ...     {
-          ...       'pollinates':{'properties':['occurences']},
-          ...       'eats':{'properties':['occurences']},
-          ...       'memberOf':{'properties':['occurences']}
+          ...       'pollinates':{'properties':['occurrences']},
+          ...       'eats':{'properties':['occurrences']},
+          ...       'memberOf':{'properties':['occurrences']}
           ...     }
           ... )
         """
@@ -690,7 +726,7 @@ class EcoAnalysis(object):
             mutateProperty="embedding",
             randomSeed=42,
             embeddingDimension=embeddingDimension,
-            relationshipWeightProperty="occurences",
+            relationshipWeightProperty="occurrences",
             iterationWeights=[0.8, 1, 1, 1],
         )
         print(f"Required memory for running FastRP: {result['requiredMemory']}")
@@ -703,7 +739,7 @@ class EcoAnalysis(object):
             mutateProperty="embedding",
             randomSeed=42,
             embeddingDimension=embeddingDimension,
-            relationshipWeightProperty="occurences",
+            relationshipWeightProperty="occurrences",
             iterationWeights=[0.8, 1, 1, 1],
         )
         print(f"Number of embedding vectors produced: {result['nodePropertiesWritten']}")

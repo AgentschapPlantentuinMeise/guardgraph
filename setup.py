@@ -26,7 +26,10 @@ setup(name='guardgraph',
           'pandas',
           'requests',
           'matplotlib',
-          'tqdm'
+          'tqdm',
+          'scikit-learn',
+          'imblearn',
+          'joblib' # kaggle pickled models
       ],
       extras_require={
           'documentation': ['Sphinx']
