@@ -679,7 +679,7 @@ class EcoAnalysis(object):
             auth=('neo4j', self.ig._password)
         )
 
-    def create_projection(self, name, node_projection=None, relationship_projection=None):
+    def create_projection(self, name, node_projection=None, relationship_projection=None, force=False):
         """Create graph data model (projection)
 
         Example:
@@ -704,7 +704,7 @@ class EcoAnalysis(object):
             self.relationship_projection
         )
         print(result['requiredMemory'])
-        if input('Continue? ') != 'yes':
+        if not force and input('Continue? ') != 'yes':
             return
         
         G, result = self.gds.graph.project(
@@ -720,7 +720,7 @@ class EcoAnalysis(object):
             self.projections = {}
             self.projections[name] = G
 
-    def create_embedding(self, projection, embeddingDimension=4):
+    def create_embedding(self, projection, embeddingDimension=4, force=False):
         result = self.gds.fastRP.mutate.estimate(
             self.projections[projection],
             mutateProperty="embedding",
@@ -731,7 +731,7 @@ class EcoAnalysis(object):
         )
         print(f"Required memory for running FastRP: {result['requiredMemory']}")
 
-        if input('Continue? ') != 'yes':
+        if not force and input('Continue? ') != 'yes':
             return
 
         result = self.gds.fastRP.mutate(

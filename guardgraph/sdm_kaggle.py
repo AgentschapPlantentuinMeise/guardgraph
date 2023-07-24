@@ -17,7 +17,6 @@ from guardgraph.graph import InteractionsGraph, EcoAnalysis
 # Analysis settings
 presence_only = False
 model_type = 'environmental' # environmental|spatial
-create_embedding = False
 
 # Example code
 # https://www.kaggle.com/code/histoffe/baseline-spatial-rf-pa-sum
@@ -461,20 +460,20 @@ fig.savefig('/data/results/triadic_closed_spears_r.png')
 #  SET r.occurrences = toInteger(r.occurrences) RETURN COUNT(r)
 #''')
 ea = EcoAnalysis(ig)
-if create_embedding:
-    ea.create_projection(
-        'kaggle_projection',
-        ['species'],
-        {
-            r:{'properties':['occurrences']}
-            for r in dyadic_nodes['TYPE(r)'].value_counts().index
-        }
-    )
-    ea.create_embedding('kaggle_projection', embeddingDimension=10)
+ea.create_projection(
+    'kaggle_projection',
+    ['species'],
+    {
+        r:{'properties':['occurrences']}
+        for r in dyadic_nodes['TYPE(r)'].value_counts().index
+    }, force=True
+)
+ea.create_embedding('kaggle_projection', embeddingDimension=10, force=True)
 embeddings = ea.get_embeddings(
     'kaggle_projection',
     species_list=species_with_ix, plot=False
 )
+ea.drop_projection('kaggle_projection')
 embeddings = embeddings.groupby('name').apply(
     lambda g:  np.mean(np.stack(g.embedding), axis=0)
 )
@@ -488,6 +487,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils import resample
 from imblearn.under_sampling import RandomUnderSampler
 from sklearn.decomposition import PCA
+from sklearn import metrics
 
 # Train model with only embeddings and species own prob prediction
 # Xemb = []
@@ -504,7 +504,7 @@ from sklearn.decomposition import PCA
 # Train model with embeddings, species own prob prediction, PCA of other predictions
 probs = pd.DataFrame(probs)
 pca = PCA(n_components=10)
-pca.fit(probs)
+pca.fit(probs) # TODO Fit probs on test subset (now could be informing results of test to training)
 print(pca.explained_variance_ratio_)
 #print(pca.singular_values_)
 probs_pca = pca.transform(probs)
@@ -518,38 +518,63 @@ for species in embeddings.index:
     probs_pca['species_prob'] = probs[si]
     for i,ed in enumerate(e):
         probs_pca[f"emb{i}"] = ed
-    Xemb += list(probs_pca.to_records())
+    Xemb.append(probs_pca.values)
     yemb += multi_label_pa_train[int(si)].to_list()
-Xemb = np.array(Xemb)
+Xemb = np.concatenate(Xemb)
 yemb = np.array(yemb)
+Xemb, yemb = resample( # Reduce set to avoid mem killing
+    Xemb, yemb, n_samples=500000, replace=False, random_state=33
+)
 
 # Train/test prep
 Xemb_train, Xemb_test, yemb_train, yemb_test = train_test_split(
     Xemb, yemb, test_size=0.5, stratify=yemb, random_state=42
 )
 # Reduce test set to avoid memory issue
-Xemb_test, yemb_test = resample(
-    Xemb_test, yemb_test, n_samples=100000, replace=False, random_state=33
-)
+#Xemb_test, yemb_test = resample(
+#    Xemb_test, yemb_test, n_samples=100000, replace=False, random_state=33
+#)
 rus = RandomUnderSampler(
     sampling_strategy=0.5, random_state=0
 )
 Xemb_resampled, yemb_resampled = rus.fit_resample(
     Xemb_train, yemb_train
 )
-clf = RandomForestClassifier(max_depth=2, random_state=0)
-clf.fit(Xemb_resampled, yemb_resampled)
-clf.score(Xemb_resampled, yemb_resampled)
-#probs_emb = clf.predict_proba(Xemb_resampled)[:,1]
-probs_emb_test = clf.predict_proba(Xemb_test)[:,1]
-print(
-    ((probs_emb_test>0.5)&(yemb_test==1)).sum(),
-    ((probs_emb_test>0.5)&(yemb_test==0)).sum()
-)
-#((Xemb[:,0]>0.15)&(yemb==0)).sum()
-#((probs_emb>0.15)&(yemb==0)).sum()
-#((probs_emb>0.15)&(yemb==1)).sum()
-#((Xemb[:,0]>0.15)&(yemb==1)).sum()
+
+# Fit and validate ML models
+for input_type, Xemb_select, Xemb_test_select in zip(
+        ('pca_s_emb', 's_emb', 'pca_s', 'spred', 'emb', 'pca'),
+        (Xemb_resampled, Xemb_resampled[:,10:], Xemb_resampled[:,:11],
+         Xemb_resampled[:,10].reshape(-1, 1),
+         Xemb_resampled, Xemb_resampled[:,11:], Xemb_resampled[:,:10]),
+        (Xemb_test, Xemb_test[:,10:], Xemb_test[:,:11],
+         Xemb_test[:,10].reshape(-1, 1),
+         Xemb_test, Xemb_test[:,11:], Xemb_test[:,:10])
+):
+    print(input_type)
+    clf = RandomForestClassifier(max_depth=2, random_state=0)
+    clf.fit(Xemb_select, yemb_resampled)
+    print('Score', clf.score(Xemb_test_select, yemb_test))
+    probs_emb = clf.predict_proba(Xemb_select)[:,1]
+    probs_emb_test = clf.predict_proba(Xemb_test_select)[:,1]
+    preds_emb_test = clf.predict(Xemb_test_select)
+    print(metrics.confusion_matrix(yemb_test, preds_emb_test))
+    #print(
+    #    pd.Series(probs_emb_test[yemb_test==1]).describe(),
+    #    pd.Series(probs_emb_test[yemb_test==0]).describe()
+    #)
+    #fpr, tpr, thresholds = metrics.roc_curve(yemb_test, probs_emb_test)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10,5))
+    #ax.plot(fpr, tpr)
+    metrics.RocCurveDisplay.from_predictions(yemb_test, probs_emb_test, ax=ax1)
+    #metrics.RocCurveDisplay.from_predictions(yemb_resampled, probs_emb, ax=ax)
+    ax1.set_xlabel('False positive rate')
+    ax1.set_ylabel('True positive rate')
+    metrics.PrecisionRecallDisplay.from_predictions(yemb_test, probs_emb_test, ax=ax2)
+    ax2.set_xlabel('Recall')
+    ax2.set_ylabel('Precision')
+    fig.suptitle(f"{input_type} performance")
+    fig.savefig(f"/data/results/{input_type}_pred_roc.png")
 
 # Train model with embeddings, species own prob prediction, all other predictions
 # Xemb = []
