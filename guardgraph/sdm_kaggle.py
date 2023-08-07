@@ -10,6 +10,7 @@ import requests
 from json import JSONDecodeError
 import tqdm
 from scipy.stats import spearmanr, pearsonr
+from sklearn.utils import resample
 import matplotlib.pyplot as plt
 import seaborn as sns
 from guardgraph.graph import InteractionsGraph, EcoAnalysis
@@ -17,6 +18,9 @@ from guardgraph.graph import InteractionsGraph, EcoAnalysis
 # Analysis settings
 presence_only = False
 model_type = 'environmental' # environmental|spatial
+species_subset_frac = .5 # subsample species for prototyping
+observations_subset_frac = False #.8 # subsample observations for prototyping
+pca_fit_on_subset = True # training PCA on subset to test for bias of informing training data with PCA of all predictions that was informed by full truth set
 
 # Example code
 # https://www.kaggle.com/code/histoffe/baseline-spatial-rf-pa-sum
@@ -64,7 +68,22 @@ else:
         index=['lat', 'lon', 'patchID'],
         columns='speciesId',
         values='label').reset_index().fillna(0)
-
+    ##### Subsample for running locally
+    if species_subset_frac and species_subset_frac < 1:
+        multi_label_pa_train = multi_label_pa_train.sample(
+            frac=species_subset_frac, axis=1
+        )
+        pa_train = pa_train[
+            pa_train.speciesId.isin(multi_label_pa_train.columns)
+        ].copy()
+        pa_species = {
+            str(s) for s in pa_train.speciesId.unique()
+        }
+    if observations_subset_frac and observations_subset_frac < 1:
+        multi_label_pa_train = multi_label_pa_train.sample(
+            frac=observations_subset_frac
+        )
+        
     #### Test
     pa_test = pd.read_csv(pa_test_file, sep=';')
     pa_test = pa_test.groupby(['patchID', 
@@ -107,7 +126,9 @@ if model_type == 'environmental':
     files_rf = erzf.infolist()
     models = {}
     for f in tqdm.tqdm(list(filter(lambda x: x.filename.endswith('.pkl'), files_rf))):
-        try: models[f.filename.split('_')[2][:-4]] = joblib.load(
+        speciesId = f.filename.split('_')[2][:-4]
+        if speciesId not in pa_species: continue
+        try: models[speciesId] = joblib.load(
             erzf.open(f)
         )
         
@@ -484,7 +505,6 @@ embeddings = pd.DataFrame(
 # ML imports
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.utils import resample
 from imblearn.under_sampling import RandomUnderSampler
 from sklearn.decomposition import PCA
 from sklearn import metrics
@@ -504,13 +524,18 @@ from sklearn import metrics
 # Train model with embeddings, species own prob prediction, PCA of other predictions
 probs = pd.DataFrame(probs)
 pca = PCA(n_components=10)
-pca.fit(probs) # TODO Fit probs on test subset (now could be informing results of test to training)
+if pca_fit_on_subset:
+    probs_subset = probs.sample(frac=0.5)
+    pca.fit(probs_subset)
+else:
+    pca.fit(probs)
 print(pca.explained_variance_ratio_)
 #print(pca.singular_values_)
 probs_pca = pca.transform(probs)
 probs_pca = pd.DataFrame(probs_pca)
 Xemb = []
 yemb = []
+added_subset = False
 for species in embeddings.index:
     e = embeddings.loc[species].to_list()
     si = name2id[species]
@@ -518,6 +543,9 @@ for species in embeddings.index:
     probs_pca['species_prob'] = probs[si]
     for i,ed in enumerate(e):
         probs_pca[f"emb{i}"] = ed
+    if not added_subset and pca_fit_on_subset:
+        probs_pca['used2fit'] = probs_pca.index.isin(probs_subset.index)
+        added_subset = True
     Xemb.append(probs_pca.values)
     yemb += multi_label_pa_train[int(si)].to_list()
 Xemb = np.concatenate(Xemb)
@@ -541,30 +569,72 @@ Xemb_resampled, yemb_resampled = rus.fit_resample(
     Xemb_train, yemb_train
 )
 
+## Include total of non-0 embedding dimensions
+# TODO add directly when creating Xemb
+Xemb_resampled = np.concatenate([
+    Xemb_resampled,
+    (Xemb_resampled[:,11:21]!=0).sum(axis=1).reshape(-1, 1)
+], axis=1)
+Xemb_test = np.concatenate([
+    Xemb_test,
+    (Xemb_test[:,11:21]!=0).sum(axis=1).reshape(-1, 1)
+], axis=1)
+
 # Fit and validate ML models
+pca_trained_selector = Xemb_test[:,21].astype(bool)
+spec_embed_pyth = (Xemb_test[:,11:21]**2).sum(axis=1)**.5
+spec_embed_selector = spec_embed_pyth>.9 #Xemb_test[:,22]>9
 for input_type, Xemb_select, Xemb_test_select in zip(
-        ('pca_s_emb', 's_emb', 'pca_s', 'spred', 'emb', 'pca'),
-        (Xemb_resampled, Xemb_resampled[:,10:], Xemb_resampled[:,:11],
+        ('pca_s_emb', 's_emb', 'pca_s', 'spred', 'emb', 'pca', 'sumemb'),
+        (Xemb_resampled, Xemb_resampled[:,10:21],
+         Xemb_resampled[:,:11],
          Xemb_resampled[:,10].reshape(-1, 1),
-         Xemb_resampled, Xemb_resampled[:,11:], Xemb_resampled[:,:10]),
-        (Xemb_test, Xemb_test[:,10:], Xemb_test[:,:11],
+         Xemb_resampled, Xemb_resampled[:,11:21],
+         Xemb_resampled[:,:10],
+         Xemb_resampled[:,
+                        (22 if pca_fit_on_subset else 21)
+                        ].reshape(-1, 1)),#22
+        (Xemb_test, Xemb_test[:,10:21], Xemb_test[:,:11],
          Xemb_test[:,10].reshape(-1, 1),
-         Xemb_test, Xemb_test[:,11:], Xemb_test[:,:10])
+         Xemb_test, Xemb_test[:,11:21], Xemb_test[:,:10],
+         Xemb_test[:,
+                   (22 if pca_fit_on_subset else 21)#22
+                   ].reshape(-1, 1))
 ):
     print(input_type)
     clf = RandomForestClassifier(max_depth=2, random_state=0)
     clf.fit(Xemb_select, yemb_resampled)
-    print('Score', clf.score(Xemb_test_select, yemb_test))
+    score = clf.score(Xemb_test_select, yemb_test)
+    print('Score', score)
     probs_emb = clf.predict_proba(Xemb_select)[:,1]
     probs_emb_test = clf.predict_proba(Xemb_test_select)[:,1]
     preds_emb_test = clf.predict(Xemb_test_select)
-    print(metrics.confusion_matrix(yemb_test, preds_emb_test))
+    print(
+        metrics.confusion_matrix(yemb_test, preds_emb_test),
+        '\nPCA trained\n', metrics.confusion_matrix(
+            yemb_test[pca_trained_selector],
+            preds_emb_test[pca_trained_selector]
+        ),
+        '\nNot PCA trained\n', metrics.confusion_matrix(
+            yemb_test[~pca_trained_selector],
+            preds_emb_test[~pca_trained_selector]
+        ),
+        '\nHigh spec embed\n', metrics.confusion_matrix(
+            yemb_test[spec_embed_selector],
+            preds_emb_test[spec_embed_selector]
+        ),
+        '\nLow spec embed\n', metrics.confusion_matrix(
+            yemb_test[~spec_embed_selector],
+            preds_emb_test[~spec_embed_selector]
+        )
+    )
     #print(
     #    pd.Series(probs_emb_test[yemb_test==1]).describe(),
     #    pd.Series(probs_emb_test[yemb_test==0]).describe()
     #)
     #fpr, tpr, thresholds = metrics.roc_curve(yemb_test, probs_emb_test)
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10,5))
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10,10))
+    #fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10,5))
     #ax.plot(fpr, tpr)
     metrics.RocCurveDisplay.from_predictions(yemb_test, probs_emb_test, ax=ax1)
     #metrics.RocCurveDisplay.from_predictions(yemb_resampled, probs_emb, ax=ax)
@@ -573,7 +643,23 @@ for input_type, Xemb_select, Xemb_test_select in zip(
     metrics.PrecisionRecallDisplay.from_predictions(yemb_test, probs_emb_test, ax=ax2)
     ax2.set_xlabel('Recall')
     ax2.set_ylabel('Precision')
-    fig.suptitle(f"{input_type} performance")
+    # Confusion spread plots
+    tp = (yemb_test==1)&(preds_emb_test==1)
+    tn = (yemb_test==0)&(preds_emb_test==0)
+    fp = (yemb_test==0)&(preds_emb_test==1)
+    fn = (yemb_test==1)&(preds_emb_test==0)
+    for sel,label in zip((tn,fn,fp,tp),('tn','fn','fp','tp')):
+        ## PCA dim1&2 confusion
+        ax3.scatter(Xemb_test[sel, 0],Xemb_test[sel, 1], label=label, alpha=.1)
+        ## Species embedding  dim1&2 confusion
+        ax4.scatter(Xemb_test[sel, 11],Xemb_test[sel, 12], label=label, alpha=.1)
+    ax3.set_title('PCA confusion')
+    lgd = ax3.legend()
+    for lh in lgd.legend_handles: lh.set_alpha(1)
+    ax4.set_title('Species embedding confusion')
+    lgd = ax4.legend()
+    for lh in lgd.legend_handles: lh.set_alpha(1)
+    fig.suptitle(f"{input_type} performance - score: {score}")
     fig.savefig(f"/data/results/{input_type}_pred_roc.png")
 
 # Train model with embeddings, species own prob prediction, all other predictions
