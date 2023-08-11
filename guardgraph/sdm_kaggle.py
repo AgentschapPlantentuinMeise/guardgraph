@@ -715,4 +715,14 @@ cattdf = cattdf[
         species_with_ix
         #kaggle_species.species_name
     )
-].copy()
+].set_index('AccSpeciesName')
+for pgf in cattdf.PlantGrowthForm.value_counts().index:
+    selector = [
+        cattdf.loc[s].PlantGrowthForm==pgf
+        if s in cattdf.index else False
+        for s in Xemb_test[:,22]
+    ]  
+    print(
+        pgf, '\n',
+        metrics.confusion_matrix(yemb_test[selector], preds_emb_test[selector])
+    )
