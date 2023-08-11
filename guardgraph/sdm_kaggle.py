@@ -546,6 +546,7 @@ for species in embeddings.index:
     if not added_subset and pca_fit_on_subset:
         probs_pca['used2fit'] = probs_pca.index.isin(probs_subset.index)
         added_subset = True
+    probs_pca['species'] = species
     Xemb.append(probs_pca.values)
     yemb += multi_label_pa_train[int(si)].to_list()
 Xemb = np.concatenate(Xemb)
@@ -586,19 +587,19 @@ spec_embed_pyth = (Xemb_test[:,11:21]**2).sum(axis=1)**.5
 spec_embed_selector = spec_embed_pyth>.9 #Xemb_test[:,22]>9
 for input_type, Xemb_select, Xemb_test_select in zip(
         ('pca_s_emb', 's_emb', 'pca_s', 'spred', 'emb', 'pca', 'sumemb'),
-        (Xemb_resampled, Xemb_resampled[:,10:21],
+        (Xemb_resampled[:,:21], Xemb_resampled[:,10:21],
          Xemb_resampled[:,:11],
          Xemb_resampled[:,10].reshape(-1, 1),
-         Xemb_resampled, Xemb_resampled[:,11:21],
+         Xemb_resampled[:,11:21],
          Xemb_resampled[:,:10],
          Xemb_resampled[:,
-                        (22 if pca_fit_on_subset else 21)
-                        ].reshape(-1, 1)),#22
-        (Xemb_test, Xemb_test[:,10:21], Xemb_test[:,:11],
+                        (23 if pca_fit_on_subset else 22)
+                        ].reshape(-1, 1)),
+        (Xemb_test[:,:21], Xemb_test[:,10:21], Xemb_test[:,:11],
          Xemb_test[:,10].reshape(-1, 1),
-         Xemb_test, Xemb_test[:,11:21], Xemb_test[:,:10],
+         Xemb_test[:,11:21], Xemb_test[:,:10],
          Xemb_test[:,
-                   (22 if pca_fit_on_subset else 21)#22
+                   (23 if pca_fit_on_subset else 22)
                    ].reshape(-1, 1))
 ):
     print(input_type)
@@ -675,3 +676,43 @@ for input_type, Xemb_select, Xemb_test_select in zip(
 # Xemb = np.array(Xemb)
 
 # Train model with predictions multiplied with embeddings
+
+# Species features
+## https://www.ebi.ac.uk/ols/ontologies/oba
+## https://pubmed.ncbi.nlm.nih.gov/36747660/
+## https://pubmed.ncbi.nlm.nih.gov/19779746/
+from guardgraph.utils import download_file
+from owlready2 import get_ontology
+download_file(
+    'http://purl.obolibrary.org/obo/oba.owl',
+    '/data'
+)
+onto = get_ontology("file:///data/oba.owl").load()
+
+## Species traits dataset
+### Open traits interesting sets
+#### PhenObs, UCIMLR-Iris, AusTraits, GlobTherm, BETYdb, BROT, Compadre, Database of Plant Heat Tolerances, eFLOWER, Elton Traits, Global Biotic Interactions, Kubitzki et al, Santi et al, 2013, TRY - Global Plant Trait Database
+### https://opentraits.org/datasets/PhenObs
+### data @ https://idata.idiv.de/ddm/Data/ShowData/3535?version=38
+### cite @ https://doi.org/10.25829/idiv.3535-6j8cmx
+#traits = pd.read_csv(
+#    '/data/species_traits/3535_38_processeddata_PhenObs_2020(1).csv',
+#    sep=';'
+#)                                    
+#trait_species = set(traits.Species.value_counts().index)
+
+### Try db
+#### For citation see zip
+#%pip install openpyxl
+# read_excel gave seg fault so manually exported it to csv
+#### Interesting columns: PhylogeneticGroup, PlantGrowthForm, LeafType, LeafPhenology, PhotosyntheticPathway, Woodiness, LeafCompoundness
+cattdf = pd.read_csv(
+    '/data/species_traits/Try2023811103613TRY_Categorical_Traits_Lookup_Table_2012_03_17_TestRelease/TRY_Categorical_Traits_Lookup_Table_2012_03_17_TestRelease.csv',
+    sep=';'
+)
+cattdf = cattdf[
+    cattdf.AccSpeciesName.isin(
+        species_with_ix
+        #kaggle_species.species_name
+    )
+].copy()

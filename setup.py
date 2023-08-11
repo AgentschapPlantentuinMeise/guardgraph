@@ -29,7 +29,8 @@ setup(name='guardgraph',
           'tqdm',
           'scikit-learn',
           'imblearn',
-          'joblib' # kaggle pickled models
+          'joblib', # kaggle pickled models
+          'owlready2'
       ],
       extras_require={
           'documentation': ['Sphinx']
