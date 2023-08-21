@@ -21,6 +21,8 @@ model_type = 'environmental' # environmental|spatial
 species_subset_frac = .5 # subsample species for prototyping
 observations_subset_frac = False #.8 # subsample observations for prototyping
 pca_fit_on_subset = True # training PCA on subset to test for bias of informing training data with PCA of all predictions that was informed by full truth set
+test_randomised_embeddings = True # Randomise embeddings to test relevance
+
 
 # Example code
 # https://www.kaggle.com/code/histoffe/baseline-spatial-rf-pa-sum
@@ -501,7 +503,10 @@ embeddings = embeddings.groupby('name').apply(
 embeddings = pd.DataFrame(
     embeddings.to_list(), index=embeddings.index
 )
-
+if test_randomised_embeddings:
+    for c in embeddings.columns:
+        embeddings[c] = list(embeddings[c].sample(frac=1,ignore_index=True))
+        
 # ML imports
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
@@ -581,6 +586,29 @@ Xemb_test = np.concatenate([
     (Xemb_test[:,11:21]!=0).sum(axis=1).reshape(-1, 1)
 ], axis=1)
 
+# Species traits
+cattdf = pd.read_csv(
+    '/data/species_traits/Try2023811103613TRY_Categorical_Traits_Lookup_Table_2012_03_17_TestRelease/TRY_Categorical_Traits_Lookup_Table_2012_03_17_TestRelease.csv',
+    sep=';', low_memory=False
+)
+cattdf = cattdf[
+    cattdf.AccSpeciesName.isin(
+        species_with_ix
+        #kaggle_species.species_name
+    )
+].set_index('AccSpeciesName')
+trait_selectors = {
+    pgf:[
+        cattdf.loc[s].PlantGrowthForm==pgf
+        if s in cattdf.index else False
+        for s in Xemb_test[:,22]
+    ] for pgf in cattdf.PlantGrowthForm.value_counts().index
+}
+trait_selectors = {
+    f"{ts} ({sum(trait_selectors[ts])})":trait_selectors[ts]
+    for ts in trait_selectors
+}
+    
 # Fit and validate ML models
 pca_trained_selector = Xemb_test[:,21].astype(bool)
 spec_embed_pyth = (Xemb_test[:,11:21]**2).sum(axis=1)**.5
@@ -629,6 +657,25 @@ for input_type, Xemb_select, Xemb_test_select in zip(
             preds_emb_test[~spec_embed_selector]
         )
     )
+    fig, axes = plt.subplots(2, 7, figsize=(20,10))
+    for pgfi, pgf in enumerate(trait_selectors):
+        print(
+            pgf, '\n',
+            metrics.confusion_matrix(
+                yemb_test[trait_selectors[pgf]],
+                preds_emb_test[trait_selectors[pgf]]
+            )
+        )
+        metrics.RocCurveDisplay.from_predictions(
+            yemb_test[trait_selectors[pgf]],
+            probs_emb_test[trait_selectors[pgf]], ax=axes[0,pgfi]
+        )
+        axes[0,pgfi].set_title(pgf)
+        metrics.PrecisionRecallDisplay.from_predictions(
+            yemb_test[trait_selectors[pgf]],
+            probs_emb_test[trait_selectors[pgf]], ax=axes[1,pgfi]
+        )
+    fig.savefig(f"/data/results/{input_type}_pred_roc_on_traits.png")
     #print(
     #    pd.Series(probs_emb_test[yemb_test==1]).describe(),
     #    pd.Series(probs_emb_test[yemb_test==0]).describe()
@@ -706,23 +753,23 @@ onto = get_ontology("file:///data/oba.owl").load()
 #%pip install openpyxl
 # read_excel gave seg fault so manually exported it to csv
 #### Interesting columns: PhylogeneticGroup, PlantGrowthForm, LeafType, LeafPhenology, PhotosyntheticPathway, Woodiness, LeafCompoundness
-cattdf = pd.read_csv(
-    '/data/species_traits/Try2023811103613TRY_Categorical_Traits_Lookup_Table_2012_03_17_TestRelease/TRY_Categorical_Traits_Lookup_Table_2012_03_17_TestRelease.csv',
-    sep=';'
-)
-cattdf = cattdf[
-    cattdf.AccSpeciesName.isin(
-        species_with_ix
-        #kaggle_species.species_name
-    )
-].set_index('AccSpeciesName')
-for pgf in cattdf.PlantGrowthForm.value_counts().index:
-    selector = [
-        cattdf.loc[s].PlantGrowthForm==pgf
-        if s in cattdf.index else False
-        for s in Xemb_test[:,22]
-    ]  
-    print(
-        pgf, '\n',
-        metrics.confusion_matrix(yemb_test[selector], preds_emb_test[selector])
-    )
+# cattdf = pd.read_csv(
+#     '/data/species_traits/Try2023811103613TRY_Categorical_Traits_Lookup_Table_2012_03_17_TestRelease/TRY_Categorical_Traits_Lookup_Table_2012_03_17_TestRelease.csv',
+#     sep=';'
+# )
+# cattdf = cattdf[
+#     cattdf.AccSpeciesName.isin(
+#         species_with_ix
+#         #kaggle_species.species_name
+#     )
+# ].set_index('AccSpeciesName')
+# for pgf in cattdf.PlantGrowthForm.value_counts().index:
+#     selector = [
+#         cattdf.loc[s].PlantGrowthForm==pgf
+#         if s in cattdf.index else False
+#         for s in Xemb_test[:,22]
+#     ]  
+#     print(
+#         pgf, '\n',
+#         metrics.confusion_matrix(yemb_test[selector], preds_emb_test[selector])
+#     )
