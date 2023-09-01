@@ -21,7 +21,7 @@ model_type = 'environmental' # environmental|spatial
 species_subset_frac = .5 # subsample species for prototyping
 observations_subset_frac = False #.8 # subsample observations for prototyping
 pca_fit_on_subset = True # training PCA on subset to test for bias of informing training data with PCA of all predictions that was informed by full truth set
-test_randomised_embeddings = True # Randomise embeddings to test relevance
+test_randomised_embeddings = False # Randomise embeddings to test relevance
 
 
 # Example code
@@ -259,8 +259,11 @@ r_types = pd.DataFrame(list(kaggle_species.ix_r_types.apply(
     lambda x: rtypes|{r['TYPE(r)']:r['COUNT(*)'] for r in x})), index=kaggle_species.index)
 r_types['total_r'] = r_types.sum(axis=1)
 r_types['species_name'] = kaggle_species.species_name
+top20ix = r_types.set_index('species_name').sum().sort_values(ascending=False).index[1:21]
 fig, ax = plt.subplots(figsize=(10,5))
-sns.violinplot(data=r_types.set_index('species_name'), orient='h', ax=ax)
+sns.boxplot(data=r_types.set_index('species_name')[top20ix], orient='h', ax=ax)
+ax.set_xlabel('Interactions / species')
+fig.tight_layout()
 fig.savefig('/data/results/ix_types_kaggle.png')
 
 species_with_ix = list(r_types[r_types.total_r>0].species_name)
@@ -347,12 +350,32 @@ dyadic_random['prob_spears'] = dyadic_random.apply(
 )
 dyadic_random['prob_spears_r'] = dyadic_random.prob_spears.apply(lambda x: x[0])
 print(dyadic_random.prob_spears_r.describe())
-fig, ax = plt.subplots(figsize=(10,5))
-sns.violinplot(data=dyadic_nodes, y='prob_spears_r', x='TYPE(r)', orient='v', ax=ax)
-fig.savefig('/data/results/dyadic_spears_r.png')
-fig, ax = plt.subplots(figsize=(3,5))
-sns.violinplot(data=dyadic_random.prob_spears_r, orient='v', ax=ax)
+
+dyadic_nodes['SPECIESSETSTR'] = dyadic_nodes.T.apply(lambda x: str(list(sorted({x['n.name'],x['m.name']}))))
+selection=~dyadic_nodes[['SPECIESSETSTR','TYPE(r)']].duplicated()
+fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(12,5), sharey=True, width_ratios=[8,1])
+sns.stripplot(data=dyadic_nodes[selection], y='prob_spears_r', x='TYPE(r)', orient='v', ax=axes[0])
+sns.boxplot(data=dyadic_nodes[selection], y='prob_spears_r', x='TYPE(r)', orient='v', ax=axes[0], color='white')#, scale='width')
+axes[0].set_ylim((-1,1))
+#fig.savefig('/data/results/dyadic_spears_r.png')
+#fig, ax = plt.subplots(figsize=(3,5))
+sns.stripplot(data=dyadic_random.prob_spears_r, orient='v', ax=axes[1])
+sns.boxplot(data=dyadic_random.prob_spears_r, orient='v', ax=axes[1], color='white')#, scale='width')
+axes[1].set_xticklabels(['random'])
 fig.savefig('/data/results/dyadic_random_spears_r.png')
+
+# dyadic_nodes['correlation_quantile'] = pd.qcut(dyadic_nodes.prob_spears_r, 4)
+# fig, ax = plt.subplots(figsize=(10,5))
+# sns.stripplot(data=dyadic_nodes[selection], y='corrchecks',
+# x='correlation_quantile', orient='v', ax=ax)
+# sns.boxplot(data=dyadic_nodes[selection], y='corrchecks',
+# x='correlation_quantile', orient='v', ax=ax, color='white')
+# fig.savefig('/data/results/dyadic_qcorrchecks.png')
+# spearmanr(dyadic_nodes.prob_spears_r, dyadic_nodes.corrchecks)
+# pearsonr(dyadic_nodes.prob_spears_r, dyadic_nodes.corrchecks)
+# fig2, ax = plt.subplots(figsize=(10,5))
+# ax.scatter(dyadic_nodes.prob_spears_r, dyadic_nodes.corrchecks)
+# fig2.savefig('/data/results/scatter_dyadic_qcorrchecks.png')
 
 ## Triadic
 mask_diagonal = np.ones((3,3))
@@ -412,11 +435,21 @@ triadic_random['prob_spears_mean_r'] = triadic_random.prob_spears.apply(
     lambda x: (np.abs(x[0]).sum()-3)/6
 )
 print(triadic_random.prob_spears_mean_r.describe())
-fig, ax = plt.subplots(figsize=(10,5))
-sns.violinplot(data=triadic_nodes_top, y='prob_spears_mean_r', x='TYPESETSTR', orient='v', ax=ax)
-fig.savefig('/data/results/triadic_spears_r.png')
-fig, ax = plt.subplots(figsize=(3,5))
-sns.violinplot(data=triadic_random.prob_spears_mean_r, orient='v', ax=ax)
+triadic_nodes_top.TYPESETSTR = triadic_nodes_top.TYPESETSTR.apply(lambda x: x.replace(',',',\n'))
+
+triadic_nodes_top['SPECIESSETSTR'] = triadic_nodes_top.T.apply(lambda x: str(list(sorted({x['n.name'],x['m.name'],x['o.name']}))))
+selection=~triadic_nodes_top[['SPECIESSETSTR','TYPESETSTR']].duplicated()
+# in theory selection could remove valid typeset variations with same species
+fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(12,5), sharey=True, width_ratios=[8,1])
+sns.stripplot(data=triadic_nodes_top[selection], y='prob_spears_mean_r', x='TYPESETSTR', orient='v', ax=axes[0])
+sns.violinplot(data=triadic_nodes_top[selection], y='prob_spears_mean_r', x='TYPESETSTR', orient='v', scale='width', ax=axes[0], color='white')
+#fig.savefig('/data/results/triadic_spears_r.png')
+#fig, ax = plt.subplots(figsize=(3,5))
+sns.stripplot(data=triadic_random.prob_spears_mean_r, orient='v', ax=axes[1])
+sns.violinplot(data=triadic_random.prob_spears_mean_r, orient='v', scale='width', ax=axes[1], color='white')
+axes[0].set_ylim((0,1))
+axes[1].set_xticklabels(['random'])
+fig.tight_layout()
 fig.savefig('/data/results/triadic_random_spears_r.png')
 
 ## Triadic closed
@@ -474,9 +507,18 @@ triadic_closed_nodes_top = triadic_closed_nodes_sample[
         triadic_closed_nodes_sample.TYPESET.value_counts().index[:5])
 ]
 triadic_closed_nodes_top['TYPESETSTR'] = triadic_closed_nodes_top.TYPESET.astype(str)
-fig, ax = plt.subplots(figsize=(10,5))
-sns.violinplot(data=triadic_closed_nodes_top, y='prob_spears_mean_r', x='TYPESETSTR', orient='v', ax=ax)
-fig.savefig('/data/results/triadic_closed_spears_r.png')
+triadic_closed_nodes_top['SPECIESSETSTR'] = triadic_closed_nodes_top.T.apply(lambda x: str(list(sorted({x['n.name'],x['m.name'],x['o.name']}))))
+selection=~triadic_closed_nodes_top[['SPECIESSETSTR','TYPESETSTR']].duplicated()
+# in theory selection could remove valid typeset variations with same species
+
+fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(12,5), sharey=True, width_ratios=[8,1])
+sns.stripplot(data=triadic_closed_nodes_top[selection], y='prob_spears_mean_r', x='TYPESETSTR', orient='v', ax=axes[0])
+sns.violinplot(data=triadic_closed_nodes_top[selection], y='prob_spears_mean_r', x='TYPESETSTR', orient='v', scale='width', ax=axes[0], color='white')
+sns.stripplot(data=triadic_random.prob_spears_mean_r, orient='v', ax=axes[1])
+sns.violinplot(data=triadic_random.prob_spears_mean_r, orient='v', scale='width', ax=axes[1], color='white')
+axes[0].set_ylim((0,1))
+axes[1].set_xticklabels(['random'])
+fig.savefig('/data/results/triadic_closed_random_spears_r.png')
 
 ## Get embeddings for interacting species
 #ig.run_query('''MATCH (n:species)-[r]-()
