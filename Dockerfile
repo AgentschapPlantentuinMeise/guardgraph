@@ -21,6 +21,13 @@ RUN apt install -y -V libarrow-flight-dev
 RUN PYARROW_WITH_FLIGHT=1 pip install --no-cache-dir pyarrow
 # scikit-learn
 RUN apt-get install build-essential gfortran libopenblas-dev
+# Openstreetmaps
+RUN apt-get install libxml2-dev libxslt-dev python3-dev
+RUN pip install cython==0.29.34 #TODO check when can be done with
+newer version
+RUN pip install git+https://github.com/lxml/lxml
+# omspythontools in requirements
+
 # Guarden code
 RUN mkdir /repos
 RUN cd /repos && git clone https://github.com/neo4j/graph-data-science-client.git

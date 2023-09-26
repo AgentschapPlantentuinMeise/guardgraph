@@ -815,3 +815,21 @@ onto = get_ontology("file:///data/oba.owl").load()
 #         pgf, '\n',
 #         metrics.confusion_matrix(yemb_test[selector], preds_emb_test[selector])
 #     )
+
+# GeoPlotting Interactions
+from guardgraph.geo import plot_countries
+fig, ax = plot_countries([
+    ('France métropolitaine', 3),                                            
+    ('England', 4),                                                          
+    ('Cymru / Wales', 4),                                                    
+    ('Alba / Scotland', 4)                                                   
+])
+
+geo_ix = pa_train.groupby(
+    ['lon','lat']
+).apply(
+    lambda grp: len(set(grp.speciesId.astype('str'))&set(kaggle_species.index))/
+    len(grp.speciesId.unique())
+).reset_index().rename({0:'count_ix'},axis=1)
+ax.scatter(geo_ix.lon, geo_ix.lat,  c=geo_ix.count_ix, alpha=.7)
+

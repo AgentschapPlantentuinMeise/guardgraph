@@ -30,7 +30,8 @@ setup(name='guardgraph',
           'scikit-learn',
           'imblearn',
           'joblib', # kaggle pickled models
-          'owlready2'
+          'owlready2',
+          'OSMPythonTools'
       ],
       extras_require={
           'documentation': ['Sphinx']

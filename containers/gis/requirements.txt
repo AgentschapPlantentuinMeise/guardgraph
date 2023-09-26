@@ -1,0 +1,5 @@
+geopandas
+rasterio
+xarray
+rioxarray
+pystac-client
