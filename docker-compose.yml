@@ -1,6 +1,7 @@
 version: "3.9"
 services:
   web:
+    image: "localhost/web:latest"
     build: .
     ports:
       - "8000:5000"
@@ -23,6 +24,7 @@ services:
       - ${HOME}/data/gg:/data
       - ${HOME}/data/gg/neo4j_import:/var/lib/neo4j/import
   gis:
+    image: "localhost/gis:latest"
     build: ./containers/gis
     volumes:
       - ${HOME}/data/gg:/data
