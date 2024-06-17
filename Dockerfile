@@ -20,11 +20,10 @@ RUN apt install -y -V libarrow-flight-dev
 # https://arrow.apache.org/docs/developers/python.html#build-pyarrow
 RUN PYARROW_WITH_FLIGHT=1 pip install --no-cache-dir pyarrow
 # scikit-learn
-RUN apt-get install build-essential gfortran libopenblas-dev
+RUN apt-get install -y build-essential gfortran libopenblas-dev
 # Openstreetmaps
-RUN apt-get install libxml2-dev libxslt-dev python3-dev
-RUN pip install cython==0.29.34 #TODO check when can be done with
-newer version
+RUN apt-get install -y libxml2-dev libxslt-dev python3-dev
+RUN pip install cython==0.29.34 #TODO check when can be done with newer version
 RUN pip install git+https://github.com/lxml/lxml
 # omspythontools in requirements
 

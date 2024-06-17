@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from OSMPythonTools.overpass import Overpass
 from OSMPythonTools.nominatim import Nominatim
 
-def plot_countries(countries, ax=None):
+def plot_countries(countries, axes=None):
     """
     Args:
       countries (list of tuples): Should be list of tuples `('Name', admin_level)`
@@ -18,10 +18,11 @@ def plot_countries(countries, ax=None):
       ... ])
     
     """
-    if not ax:
+    if axes is None:
         fig, ax = plt.subplots(figsize=(10,10))
-    else: fig = ax.get_figure()
-    ax.axis('equal')
+        axes = [ax]
+    else: fig = axes[0].get_figure()
+    for ax in axes: ax.axis('equal')
         
     overpass = Overpass()
     #result = overpass.query('rel[admin_level=3]["name"="France métropolitaine"]; way(r); out body geom;')
@@ -35,9 +36,10 @@ def plot_countries(countries, ax=None):
                 polygon if g['type'] == 'Polygon'
                 else polygon[0] # Multipolygon
             )
-            ax.fill(*polygon.T, 'whitesmoke')
-            ax.plot(*polygon.T, 'gainsboro')
-    return fig, ax
+            for ax in axes:
+                ax.fill(*polygon.T, 'whitesmoke')
+                ax.plot(*polygon.T, 'gainsboro')
+    return fig, axes
         
 #polygon_data = pd.DataFrame({'elements':result.elements()})
 #for t in ('border_type', 'boundary'): polygon_data[t] = polygon_data.elements.apply(lambda x: x.tag(t))

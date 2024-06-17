@@ -337,7 +337,7 @@ class InteractionsGraph(object):
          neo4j-admin database import incremental --delimiter='\t' --array-delimiter="|" --quote='"' --nodes=import/taxontree_nodes.tsv.gz --relationships=import/taxontree_edges.tsv.gz --force neo4j
 
         # Full prep
-        neo4j-admin database import full --delimiter='\t' --array-delimiter="|" --quote='"' --nodes=import/globi_nodes.tsv.gz --nodes=import/taxontree_nodes.tsv.gz --relationships=import/globi_merged_edges.tsv.gz --relationships=import/taxontree_edges.tsv.gz --overwrite-destination neo4j
+        neo4j-admin database import full --delimiter='\t' --array-delimiter="|" --quote='"' --nodes=import/globi_nodes.tsv.gz --nodes=import/taxontree_nodes.tsv.gz --relationships=import/globi_unrefuted_merged_edges.tsv.gz --relationships=import/taxontree_edges.tsv.gz --overwrite-destination neo4j
 
         # After full prep neo4j needs to be restarted
         

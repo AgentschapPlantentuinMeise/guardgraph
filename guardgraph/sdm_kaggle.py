@@ -355,12 +355,12 @@ dyadic_nodes['SPECIESSETSTR'] = dyadic_nodes.T.apply(lambda x: str(list(sorted({
 selection=~dyadic_nodes[['SPECIESSETSTR','TYPE(r)']].duplicated()
 fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(12,5), sharey=True, width_ratios=[8,1])
 sns.stripplot(data=dyadic_nodes[selection], y='prob_spears_r', x='TYPE(r)', orient='v', ax=axes[0])
-sns.boxplot(data=dyadic_nodes[selection], y='prob_spears_r', x='TYPE(r)', orient='v', ax=axes[0], color='white')#, scale='width')
+sns.violinplot(data=dyadic_nodes[selection], y='prob_spears_r', x='TYPE(r)', orient='v', ax=axes[0], color='white', scale='width')
 axes[0].set_ylim((-1,1))
 #fig.savefig('/data/results/dyadic_spears_r.png')
 #fig, ax = plt.subplots(figsize=(3,5))
 sns.stripplot(data=dyadic_random.prob_spears_r, orient='v', ax=axes[1])
-sns.boxplot(data=dyadic_random.prob_spears_r, orient='v', ax=axes[1], color='white')#, scale='width')
+sns.violinplot(data=dyadic_random.prob_spears_r, orient='v', ax=axes[1], color='white', scale='width')
 axes[1].set_xticklabels(['random'])
 fig.savefig('/data/results/dyadic_random_spears_r.png')
 
@@ -818,18 +818,36 @@ onto = get_ontology("file:///data/oba.owl").load()
 
 # GeoPlotting Interactions
 from guardgraph.geo import plot_countries
-fig, ax = plot_countries([
+fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(12,5), sharey=True)
+plot_countries([
     ('France métropolitaine', 3),                                            
     ('England', 4),                                                          
     ('Cymru / Wales', 4),                                                    
     ('Alba / Scotland', 4)                                                   
-])
+], axes)
 
+pa_train['species'] = pa_train.speciesId.astype('str').map(speciesIdMap)
 geo_ix = pa_train.groupby(
     ['lon','lat']
 ).apply(
-    lambda grp: len(set(grp.speciesId.astype('str'))&set(kaggle_species.index))/
-    len(grp.speciesId.unique())
-).reset_index().rename({0:'count_ix'},axis=1)
-ax.scatter(geo_ix.lon, geo_ix.lat,  c=geo_ix.count_ix, alpha=.7)
-
+    lambda grp: pd.Series({
+        'intersection':(
+            dyadic_nodes['n.name'].isin(grp.species)&
+            dyadic_nodes['m.name'].isin(grp.species)
+        ).sum(),
+        'union':(
+            dyadic_nodes['n.name'].isin(grp.species)|
+            dyadic_nodes['m.name'].isin(grp.species)
+        ).sum()})
+    
+    #len(set(grp.speciesId.astype('str'))&set(kaggle_species.index))/
+    #len(grp.speciesId.unique())
+).reset_index().sort_values('union')
+axes[0].scatter(geo_ix.lon, geo_ix.lat,  c=geo_ix.intersection, cmap='Greens', s=5)
+axes[0].set_title('Within patch dyads')
+axes[1].scatter(geo_ix.lon, geo_ix.lat,  c=geo_ix.union, cmap='Reds', s=5)
+axes[1].set_title('Between patch dyads')
+fig.savefig('/data/results/map_with_ix.png')
+#legend= ax.legend(
+#    pc.legend_elements(num=5), title='#IX', loc='upper left'
+#)
