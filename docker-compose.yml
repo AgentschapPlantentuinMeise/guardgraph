@@ -3,6 +3,7 @@ services:
   web:
     image: "localhost/web:latest"
     build: .
+    imagePullPolicy: "IfNotPresent"
     ports:
       - "8000:5000"
     volumes:
@@ -26,6 +27,7 @@ services:
   gis:
     image: "localhost/gis:latest"
     build: ./containers/gis
+    imagePullPolicy: "IfNotPresent"
     volumes:
       - ${HOME}/data/gg:/data
       - ${HOME}/repos/guardgraph:/code
