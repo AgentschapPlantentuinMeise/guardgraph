@@ -11,7 +11,7 @@ services:
     environment:
       FLASK_APP: "guardgraph"
   neo4j:
-    image: "neo4j"
+    image: "neo4j:5.7.0"
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -23,10 +23,9 @@ services:
     volumes:
       - ${HOME}/data/gg:/data
       - ${HOME}/data/gg/neo4j_import:/var/lib/neo4j/import
-  gis:
-    image: "localhost/gis:latest"
-    build: ./containers/gis
-    volumes:
-      - ${HOME}/data/gg:/data
-      - ${HOME}/repos/guardgraph:/code
-    
+#  gis:
+#    image: "localhost/gis:latest"
+#    build: ./containers/gis
+#    volumes:
+#      - ${HOME}/data/gg:/data
+#      - ${HOME}/repos/guardgraph:/code
