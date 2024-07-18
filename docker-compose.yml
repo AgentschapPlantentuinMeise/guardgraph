@@ -10,6 +10,31 @@ services:
       - ${HOME}/repos/guardgraph:/code
     environment:
       FLASK_APP: "guardgraph"
+    depends_on:
+      neo4j:
+        condition: service_started
+  init-web:
+    image: "localhost/web:latest"
+    build: .
+    command: guardgraph-init
+    volumes:
+      - ${HOME}/data/gg:/data
+      - ${HOME}/repos/guardgraph:/code
+  init-neo4j:
+    image: "neo4j:5.7.0"
+    command: neo4j-admin database import full --delimiter='\t' --array-delimiter="|" --quote='"' --nodes=import/globi_nodes.tsv.gz --relationships=import/globi_merged_edges.tsv.gz --overwrite-destination neo4j
+    environment:
+      NEO4J_apoc_export_file_enabled: "true"
+      NEO4J_apoc_import_file_enabled: "true"
+      NEO4J_apoc_import_file_use__neo4j__config: "true"
+      NEO4J_PLUGINS: '["apoc", "graph-data-science"]'
+      NEO4J_server_config_strict__validation_enabled: "false"
+    volumes:
+      - ${HOME}/data/gg:/data
+      - ${HOME}/data/gg/neo4j_import:/var/lib/neo4j/import
+    depends_on:
+      init-web:
+        condition: service_completed_successfully
   neo4j:
     image: "neo4j:5.7.0"
     ports:
@@ -24,6 +49,9 @@ services:
     volumes:
       - ${HOME}/data/gg:/data
       - ${HOME}/data/gg/neo4j_import:/var/lib/neo4j/import
+    depends_on:
+      init-neo4j:
+        condition: service_completed_successfully
 #  gis:
 #    image: "localhost/gis:latest"
 #    build: ./containers/gis

@@ -41,6 +41,7 @@ setup(name='guardgraph',
       zip_safe=False,
       entry_points={
           'console_scripts': [
+              'guardgraph-init=guardgraph.__main__:main'
           ],
       },
       test_suite='nose.collector',
