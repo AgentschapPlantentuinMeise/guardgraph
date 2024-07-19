@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kompose.cmd: kompose convert --volumes hostPath
+    kompose.version: 1.26.0 (40646f47)
+  creationTimestamp: null
+  labels:
+    io.kompose.service: web
+  name: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.service: web
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        kompose.cmd: kompose convert --volumes hostPath
+        kompose.version: 1.26.0 (40646f47)
+      creationTimestamp: null
+      labels:
+        io.kompose.service: web
+    spec:
+      containers:
+        - env:
+            - name: FLASK_APP
+              value: guardgraph
+          image: localhost/web:latest
+          name: web
+          ports:
+            - containerPort: 5000
+          resources: {}
+          volumeMounts:
+            - mountPath: /data
+              name: web-hostpath0
+            - mountPath: /code
+              name: web-hostpath1
+      restartPolicy: Always
+      volumes:
+        - hostPath:
+            path: /data/gg
+          name: web-hostpath0
+        - hostPath:
+            path: /data/guardgraph
+          name: web-hostpath1
+status: {}
