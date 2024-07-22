@@ -47,6 +47,49 @@ spec:
               name: neo4j-hostpath0
             - mountPath: /var/lib/neo4j/import
               name: neo4j-hostpath1
+      # These containers are run during pod initialization
+      initContainers:
+        - name: get-globi
+          args:
+            - guardgraph-init
+          imagePullPolicy: Never
+          image: localhost/web:latest
+          resources: {}
+          volumeMounts:
+            - mountPath: /data
+              name: neo4j-hostpath0
+        - name: load-globi-db
+          args:
+            - neo4j-admin
+            - database
+            - import
+            - full
+            - --delimiter=\t
+            - --array-delimiter=|
+            - --quote="
+            - --nodes=import/globi_nodes.tsv.gz
+            - --relationships=import/globi_merged_edges.tsv.gz
+            - --overwrite-destination
+            - neo4j
+          env:
+            - name: NEO4J_PLUGINS
+              value: '["apoc", "graph-data-science"]'
+            - name: NEO4J_apoc_export_file_enabled
+              value: "true"
+            - name: NEO4J_apoc_import_file_enabled
+              value: "true"
+            - name: NEO4J_apoc_import_file_use__neo4j__config
+              value: "true"
+            - name: NEO4J_server_config_strict__validation_enabled
+              value: "false"
+          image: neo4j:5.7.0
+          resources: {}
+          volumeMounts:
+            - mountPath: /data
+              name: neo4j-hostpath0
+            - mountPath: /var/lib/neo4j/import
+              name: neo4j-hostpath1
+      # end initContainers
       restartPolicy: Always
       volumes:
         - hostPath:

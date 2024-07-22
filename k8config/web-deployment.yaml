@@ -28,6 +28,7 @@ spec:
         - env:
             - name: FLASK_APP
               value: guardgraph
+          imagePullPolicy: Never
           image: localhost/web:latest
           name: web
           ports:
