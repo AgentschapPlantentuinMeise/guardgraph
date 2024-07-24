@@ -41,12 +41,17 @@ class InteractionsGraph(object):
             
     # neo4j admin methods
     def set_password(self, password):
+        # TODO configure for non-default old password
         driver = GraphDatabase.driver("neo4j://neo4j:7687",
                               auth=("neo4j", "neo4j"))
         with driver.session(database="system") as session:
             result = session.execute_write(
                 lambda tx: tx.run(f"ALTER CURRENT USER SET PASSWORD FROM 'neo4j' TO '{password}';"))
         driver.close()
+        # Reset password and driver to new one
+        self._password = password
+        self.driver = GraphDatabase.driver("neo4j://neo4j:7687",
+                              auth=("neo4j", self._password))
 
     def set_random_password(self):
         import random
