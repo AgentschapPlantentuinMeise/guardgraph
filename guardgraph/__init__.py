@@ -1,6 +1,7 @@
 import os
 import datetime
 from flask import Flask, jsonify, request
+from guardgraph.graph import InteractionsGraph
 
 app = Flask(__name__)
 
@@ -14,7 +15,6 @@ def init_server():
     if os.path.exists('INITIATED'):
         return 'Already initiated'
     else:
-        from guardgraph.graph import InteractionsGraph
         with open('INITIATED','wt') as fout:
             fout.write(str(datetime.datetime.now()))
         ig = InteractionsGraph()
@@ -25,6 +25,7 @@ def init_server():
 @app.route('/species', methods=['POST'])
 def describe_species():
     species = request.get_json()
+    ig = InteractionsGraph()
     data = {
         s: ig.run_query(
             'MATCH (n:species)-[r]-() WHERE n.name STARTS WITH "'
