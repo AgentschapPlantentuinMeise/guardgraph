@@ -32,7 +32,7 @@ query_template = '''
   FROM\
     occurrence\
   WHERE\
-    geometry = '{geometry}'\
+    GBIF_Within("{geometry}", decimalLatitude, decimalLongitude) = True\
     AND occurrenceStatus = 'PRESENT'\
     AND \\"year\\" >= 2000\
     AND hasCoordinate = TRUE\

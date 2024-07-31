@@ -22,6 +22,7 @@ setup(name='guardgraph',
       ],
       install_requires=[
           'flask',
+          'Flask-IAM',
           'neo4j',
           'pandas',
           'requests',
@@ -31,7 +32,8 @@ setup(name='guardgraph',
           'imblearn',
           'joblib', # kaggle pickled models
           'owlready2',
-          'OSMPythonTools'
+          'OSMPythonTools',
+          'pygbif'
       ],
       extras_require={
           'documentation': ['Sphinx']

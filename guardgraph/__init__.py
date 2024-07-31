@@ -56,22 +56,33 @@ def query_interactions(species):
 @app.route('/species/interactors/cube', methods=['POST'])
 def get_interactors_cube():
     from pygbif import species, occurrences
-    from guardgraph.gfib import cube_query
+    from guardgraph.gbif import cube_query
     input_data = request.get_json()
-    species = input_data['species']
+    species_list = input_data['species']
     interactors = query_interactions(species)
     speciesKeyList = set([
-        species.name_suggest(
+        (species.name_suggest(
             s, limit=1
-        )[0]['speciesKey'] for s in species
+        ) or [{'speciesKey':None}]
+         )[0]['speciesKey'] for s in species_list
     ]+[
-        species.name_suggest(
-            s, limit=1
-        )[0]['speciesKey'] for s in interactors        
+        (species.name_suggest(
+            i['m']['name'], limit=1
+        ) or [{'speciesKey':None}]
+         )[0]['speciesKey']
+        for s in interactors
+        for i in interactors[s]
     ])
+    try:
+        speciesKeyList.remove(None)
+        print('GBIF unknown species were present')
+    except KeyError:
+        print('All species known')
+    speciesKeyList = [str(s) for s in speciesKeyList]
     cube_job_id = cube_query(
         input_data['email'], input_data['gbif_user'],
-        input_data['gbif_pwd'], country, speciesKeyList
+        input_data['gbif_pwd'], input_data['polygon'],
+        speciesKeyList
     )
     return jsonify({'cube_job_id': cube_job_id})
 
