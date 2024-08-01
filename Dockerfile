@@ -2,7 +2,7 @@
 FROM python:3.12-rc-bullseye
 WORKDIR /mbg
 RUN mkdir -p /mbg/instance/ix
-ENV FLASK_APP=app.py
+ENV FLASK_APP=guardgraph
 ENV FLASK_RUN_HOST=0.0.0.0
 #RUN apk add --no-cache gcc musl-dev linux-headers # g++ py3-numpy
 # for graphdatascience dependency
@@ -36,5 +36,6 @@ RUN cd /repos/graph-data-science-client && pip install .
 # Copy guardgraph package
 COPY . .
 RUN pip install .
+RUN pip install phonenumbers email_validator #TODO remove after Flask_IAM update
 EXPOSE 5000
 CMD ["flask", "run"]
