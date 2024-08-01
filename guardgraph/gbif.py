@@ -32,7 +32,7 @@ query_template = '''
   FROM\
     occurrence\
   WHERE\
-    GBIF_Within("{geometry}", decimalLatitude, decimalLongitude) = True\
+    GBIF_Within('{geometry}', decimalLatitude, decimalLongitude) = True\
     AND occurrenceStatus = 'PRESENT'\
     AND \\"year\\" >= 2000\
     AND hasCoordinate = TRUE\
@@ -63,7 +63,7 @@ query_template = '''
 def cube_query(email, gbif_user, gbif_pwd, geometry, speciesKeyList, query_template=query_template):
     query = query_template.format(
         email=email, geometry=geometry,
-        speciesKeyList=','.join(speciesKeyList)
+        speciesKeyList=', '.join(speciesKeyList)
     )
     #with open('query.json','wt') as qf:
     #    qf.write(query)
