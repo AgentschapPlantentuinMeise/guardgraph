@@ -1,13 +1,138 @@
 import os
 import datetime
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, render_template, redirect
 from guardgraph.graph import InteractionsGraph
+from flask_fefset import FEFset
+from flask_uxfab import UXFab
+from flask_sqlalchemy import SQLAlchemy
+from flask_iam import IAM
+# IX Form
+from flask_login import current_user
+from flask_wtf import FlaskForm
+from wtforms import StringField, SubmitField, IntegerRangeField, BooleanField, FloatField, IntegerField, HiddenField
+from flask_wtf.file import FileField
+from werkzeug.utils import secure_filename
+from wtforms.validators import InputRequired, Optional
+import urllib.parse
+import folium
 
 app = Flask(__name__)
 
-@app.route('/')
-def hello():
-    return 'Hello Interactions Seeker'
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
+app.config['SECRET_KEY'] = os.urandom(12).hex() # to allow csrf forms
+db = SQLAlchemy()
+fef = FEFset(frontend='bootstrap4')
+fef.nav_menu.append({'name':'Species interactions','url':'/'})
+fef.settings['brand_name'] = 'GUARDEN-IX'
+fef.settings['logo_url'] = '/static/images/guarden_logo.png'
+fef.init_app(app)
+db.init_app(app)
+uxf = UXFab()
+uxf.init_app(app)
+iam = IAM(db)
+iam.init_app(app)
+
+# Data models
+class IXObservation(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    latitude = db.Column(db.Float)
+    longitude = db.Column(db.Float)
+    accuracy = db.Column(db.Float)
+    species_1 = db.Column(db.String)
+    species_2 = db.Column(db.String)
+    ix_type = db.Column(db.String)
+    img_species_1 = db.Column(db.String)
+    img_species_2 = db.Column(db.String)
+    img_ix12 = db.Column(db.String)
+    datetime = db.Column(db.DateTime)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    user = db.relationship('User')
+
+class IXOForm(FlaskForm):
+    latitude = FloatField('Latitude of tasting')
+    longitude = FloatField('Longitude of tasting')
+    accuracy = HiddenField(default=-1)
+    img_ix12 = FileField('Interaction image', validators=[InputRequired()])
+    ix_type = StringField('Interaction type', validators=[InputRequired()])
+    img_species_1 = FileField('Species 1 image')
+    species_1 = StringField('Species 1')
+    img_species_2 = FileField('Species 2 image')
+    species_2 = StringField('Species 2')
+    submit_button = SubmitField('Submit Interaction')
+    
+with app.app_context():
+    db.create_all()
+
+@app.route('/', methods=['GET','POST'])
+def index():
+    mbg_coords = [50.9211519, 4.3317191]
+    form=IXOForm()
+    if form.validate_on_submit():
+        coords = [form.latitude.data, form.longitude.data]
+        ix = IXObservation()
+        form.populate_obj(ix)
+        ix.datetime = datetime.datetime.now()
+        if current_user.is_authenticated:
+            ix.user_id = current_user.id
+        ix_filename = secure_filename(
+            form.img_ix12.data.filename
+        )
+        # TODO check potential overwriting
+        form.img_ix12.data.save(
+            os.path.join(app.instance_path, 'ix/' + ix_filename)
+        )
+        ix.img_ix12 = ix_filename
+        if form.img_species_1.data:
+            s1_filename = secure_filename(
+                form.img_species_1.data.filename
+            )
+            # TODO check potential overwriting
+            form.img_species_1.data.save(
+                os.path.join(app.instance_path, 'ix/' + s1_filename)
+            )
+            ix.img_species_1 = s1_filename
+        else: ix.img_species_1 = None
+        if form.img_species_2.data:
+            s2_filename = secure_filename(
+                form.img_species_2.data.filename
+            )
+            # TODO check potential overwriting
+            form.img_species_2.data.save(
+                os.path.join(app.instance_path, 'ix/' + s2_filename)
+            )
+            ix.img_species_2 = s2_filename
+        else: ix.img_species_2 = None
+        db.session.add(ix)
+        db.session.commit()
+        form = None
+    else:
+        coords = mbg_coords
+        form_marker = None
+    tiles='https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png'
+    attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, Tiles style by <a href="https://www.hotosm.org/" target="_blank">Humanitarian OpenStreetMap Team</a> hosted by <a href="https://openstreetmap.fr/" target="_blank">OpenStreetMap France</a>'
+    map = folium.Map(location=coords, tiles=tiles, attr=attr, zoom_start=11)
+    #folium.Marker(coords, popup=popup_msg).add_to(map)
+    #https://fontawesome.com/search?m=free&o=r
+    folium.Marker(location=mbg_coords, icon=folium.Icon(color='darkgreen', icon='seedling', prefix='fa'),
+        popup='A botanic garden with a lot of interactions'
+    ).add_to(map)
+    for ix in IXObservation.query.all():
+        folium.Marker(
+            (ix.latitude,ix.longitude),
+            icon=folium.Icon(color='darkbrown', icon='seedling', prefix='fa'),
+            popup=f"""<table>
+                <tr><th>Species 1</th><td>{ix.species_1}</td></tr>
+                <tr><th>Species 2</th><td>{ix.species_2}%</td></tr>
+                <tr><th>Interaction<th><td>{ix.ix_type}</td></tr>
+            </table>"""
+        ).add_to(map)
+    # set the iframe width and height
+    map.get_root().width = "100%" #"800px"
+    map.get_root().height = "600px"
+    iframe = map.get_root()._repr_html_()
+    return render_template(
+        "ix.html", form=form, iframe=iframe
+    )
 
 @app.route('/init')
 def init_server():

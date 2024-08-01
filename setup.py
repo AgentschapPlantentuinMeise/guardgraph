@@ -33,7 +33,8 @@ setup(name='guardgraph',
           'joblib', # kaggle pickled models
           'owlready2',
           'OSMPythonTools',
-          'pygbif'
+          'pygbif',
+          'folium'
       ],
       extras_require={
           'documentation': ['Sphinx']
