@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}GUARDEN-IX{% endblock %}
+
+{% block content %}
+<div class="container">
+  <h1>Species interactions</h1>
+
+  {% if form %}
+  {% block preform %}
+  {% endblock preform %}
+  <button id="locbutton" class="btn btn-info" onclick="getLocation()">Set location from device</button>
+  {% import "uxfab/wtf.html" as wtf %}
+  {{ wtf.quick_form(form) }}
+  {% block postpreform %}
+  {% endblock postpreform %}
+  {% endif %}
+<hr>
+
+{{ iframe|safe }}
+
+{% endblock content %}
+
+{% block scripts %}
+{{super()}}
+<script>
+  var lat = document.getElementById("latitude");
+  var lon = document.getElementById("longitude");
+  var acc = document.getElementById("accuracy");
+
+  const geo_options = {
+    enableHighAccuracy: true,
+    timeout: 5000,
+    maximumAge: 0,
+  };
+  
+  function getLocation() {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(showPosition, error, geo_options);
+    } else {
+        lat.value = "Geolocation is not supported by this browser.";
+    }
+    document.getElementById("locbutton").hidden = true;
+  }
+		
+  function showPosition(position) {
+    lat.value = position.coords.latitude;
+    lon.value = position.coords.longitude;
+     acc.value = position.coords.accuracy;
+  }
+
+  function error(err) {
+    console.warn(`ERROR(${err.code}): ${err.message}`);
+  }
+</script>
+{% endblock %}
