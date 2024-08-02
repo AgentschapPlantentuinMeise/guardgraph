@@ -20,6 +20,7 @@ app = Flask(__name__)
 
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
 app.config['SECRET_KEY'] = os.urandom(12).hex() # to allow csrf forms
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024 # max 100MB upload
 db = SQLAlchemy()
 fef = FEFset(frontend='bootstrap4')
 fef.nav_menu.append({'name':'Species interactions','url':'/'})
