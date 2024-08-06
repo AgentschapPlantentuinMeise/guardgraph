@@ -1,4 +1,6 @@
 import os
+import base64
+from io import BytesIO
 import datetime
 from flask import Flask, jsonify, request, render_template, redirect
 from guardgraph.graph import InteractionsGraph
@@ -15,6 +17,7 @@ from werkzeug.utils import secure_filename
 from wtforms.validators import InputRequired, Optional
 import urllib.parse
 import folium
+from PIL import Image
 
 app = Flask(__name__)
 
@@ -45,6 +48,7 @@ class IXObservation(db.Model):
     img_species_1 = db.Column(db.String)
     img_species_2 = db.Column(db.String)
     img_ix12 = db.Column(db.String)
+    thumbnail = db.Column(db.String)
     datetime = db.Column(db.DateTime)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"))
     user = db.relationship('User')
@@ -83,6 +87,17 @@ def index():
             os.path.join(app.instance_path, 'ix/' + ix_filename)
         )
         ix.img_ix12 = ix_filename
+        image = Image.open(os.path.join(app.instance_path, 'ix/' + ix_filename))
+        MAX_SIZE = (70, 70)
+        image.thumbnail(MAX_SIZE)
+        imgbytes = BytesIO()
+        image.save(imgbytes, format='png')
+        imgbytes.seek(0)                                                                                                     
+        img_html = '<img src="data:image/png;base64,{}">'.format(
+            base64.b64encode(imgbytes.read()).decode('UTF-8')
+        )
+        ix.thumbnail = img_html
+        
         if form.img_species_1.data:
             s1_filename = secure_filename(
                 form.img_species_1.data.filename
@@ -122,10 +137,10 @@ def index():
             (ix.latitude,ix.longitude),
             icon=folium.Icon(color='darkbrown', icon='seedling', prefix='fa'),
             popup=f"""<table>
-                <tr><th>Species 1</th><td>{ix.species_1}</td></tr>
-                <tr><th>Species 2</th><td>{ix.species_2}%</td></tr>
+                <tr><th>Species 1</th><td>{ix.species_1 or 'Unknown'}</td></tr>
+                <tr><th>Species 2</th><td>{ix.species_2 or 'Unknown'}</td></tr>
                 <tr><th>Interaction<th><td>{ix.ix_type}</td></tr>
-            </table>"""
+            </table>{ix.thumbnail}"""
         ).add_to(map)
     # set the iframe width and height
     map.get_root().width = "100%" #"800px"
