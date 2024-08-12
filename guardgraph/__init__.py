@@ -11,13 +11,15 @@ from flask_iam import IAM
 # IX Form
 from flask_login import current_user
 from flask_wtf import FlaskForm
-from wtforms import StringField, SubmitField, IntegerRangeField, BooleanField, FloatField, IntegerField, HiddenField
-from flask_wtf.file import FileField
+from wtforms import StringField, SubmitField, IntegerRangeField, BooleanField, FloatField, IntegerField, HiddenField, SelectField
+from flask_wtf.file import FileField, FileAllowed, FileRequired
 from werkzeug.utils import secure_filename
 from wtforms.validators import InputRequired, Optional
 import urllib.parse
 import folium
 from PIL import Image
+import pandas as pd
+from pygbif import species, occurrences
 
 app = Flask(__name__)
 
@@ -26,7 +28,12 @@ app.config['SECRET_KEY'] = os.urandom(12).hex() # to allow csrf forms
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 # max 50MB upload
 db = SQLAlchemy()
 fef = FEFset(frontend='bootstrap4')
-fef.nav_menu.append({'name':'Species interactions','url':'/'})
+fef.nav_menu.append(
+    {'name':'Species interactions', 'url':'/'}
+)
+fef.nav_menu.append(
+    {'name':'Case study cubes', 'url':'/species/interactors/guarden/cube'}
+)
 fef.settings['brand_name'] = 'GUARDEN-IX'
 fef.settings['logo_url'] = '/static/images/guarden_logo.png'
 fef.init_app(app)
@@ -64,7 +71,30 @@ class IXOForm(FlaskForm):
     img_species_2 = FileField('Species 2 image')
     species_2 = StringField('Species 2')
     submit_button = SubmitField('Submit Interaction')
-    
+
+class GuardenCaseForm(FlaskForm):
+    case_study = SelectField(
+        'Case study',
+        choices=[
+            'France','Madagascar','Greece','Spain','Cyprus'
+        ]
+    )
+    cubes = SelectField(
+        'Cubes',
+        choices=[
+            'With and without interactors',
+            'Only with interactors',
+            'Only species of interest'
+        ]
+    )
+    species_file = FileField('Species of interest', validators=[
+        FileRequired(),
+        FileAllowed(['csv'], 'CSV only!')
+    ])
+    header = BooleanField('Header in CSV?', default=True)
+    column = IntegerField('Column number with species names (0-indexed)', default=0)
+    submit_button = SubmitField('Submit')
+
 with app.app_context():
     db.create_all()
 
@@ -196,11 +226,20 @@ def query_interactions(species):
 
 @app.route('/species/interactors/cube', methods=['POST'])
 def get_interactors_cube():
-    from pygbif import species, occurrences
     from guardgraph.gbif import cube_query
     input_data = request.get_json()
     species_list = input_data['species']
-    interactors = query_interactions(species)
+    speciesKeyList = prep_speciesKey_list(species_list)
+    cube_job_id = cube_query(
+        input_data['email'], input_data['gbif_user'],
+        input_data['gbif_pwd'], input_data['polygon'],
+        speciesKeyList
+    )
+    return jsonify({'cube_job_id': cube_job_id})
+
+def prep_speciesKey_list(species_list, with_interactors=True):
+    if with_interactors:
+        interactors = query_interactions(species_list)
     speciesKeyList = set([
         (species.name_suggest(
             s, limit=1
@@ -220,15 +259,64 @@ def get_interactors_cube():
     except KeyError:
         print('All species known')
     speciesKeyList = [str(s) for s in speciesKeyList]
-    cube_job_id = cube_query(
-        input_data['email'], input_data['gbif_user'],
-        input_data['gbif_pwd'], input_data['polygon'],
-        speciesKeyList
-    )
-    return jsonify({'cube_job_id': cube_job_id})
+
+@app.route('/species/interactors/guarden/cube', methods=['GET','POST'])
+def guarden_cube():
+    form=GuardenCaseForm()
+    if form.validate_on_submit():
+        species_df = pd.read_csv(
+            form.species_file.data,
+            header=1 if form.header.data else None
+        )
+        species_list = list(
+            species_df[species_df.columns[form.column.data]]
+        )
+        speciesKeyList = prep_speciesKey_list(species_list)
+        cube_id = case_study_cube(
+            form.case_study.data,
+            speciesKeyList
+        )
+        return redirect('/')
+    return render_template('gsc.html', form=form)
 
 @app.route('/species/interactors/cube/<cube_job_id>', methods=['GET'])
 def download_interactors_cube(cube_job_id):
     from guardgraph.gfib import download_cube
     download_cube(cube_job_id, prefix='/data/cubes')
     return 'TODO pass download link'
+
+def case_study_cube(case_study_name, speciesKeyList, polygon_simplifier=1000):
+    import tarfile
+    from shapely import wkt
+    case_study_polygon_files = {
+        'France': 'cbnmed.wkt',
+        'Madagascar': 'pnrn.wkt.txt',
+        'Greece': 'greece.wkt.txt',
+        'Spain': 'barcelona.wkt.txt',
+        'Cyprus': 'cyprus.wkt.txt'
+    }
+    case_study_polygon_file = case_study_polygon_files[
+        case_study_name
+    ]
+    case_studies = tarfile.open(
+        os.path.join(
+            app.static_path, 'guarden_case_studies.tar.xz'
+        )
+    )
+    case_study_wkt = case_studies.extractfile(
+        case_studies.getmember(case_study_polygon_file)
+    ).read()
+    case_study_polygon = wkt.loads(case_study_wkt)
+    if polygon_simplifier:
+        case_study_polygon = case_study_polygon.simplify(
+            polygon_simplifier, preserve_topology=False
+        )
+    cube_job_id = cube_query(
+        'christophe.vanneste@plantentuinmeise.be',
+        'cvanneste',
+        open('gbif_pwd','rt').read().strip(),
+        case_study_polygon.wkt,
+        speciesKeyList
+    )
+    return cube_job_id
+
