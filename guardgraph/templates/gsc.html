@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}GUARDEN Interactions for case studies{% endblock %}
+
+{% block content %}
+<div class="container">
+  <h1>GUARDEN case study cubes</h1>
+
+  {% if form %}
+  {% block preform %}
+  {% endblock preform %}
+  {% import "uxfab/wtf.html" as wtf %}
+  {{ wtf.quick_form(form) }}
+  {% block postpreform %}
+  {% endblock postpreform %}
+  {% endif %}
+<hr>
+
+{% endblock content %}
+
+{% block scripts %}
+{{super()}}
+<script>
+</script>
+{% endblock %}
