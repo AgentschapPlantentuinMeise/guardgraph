@@ -34,7 +34,8 @@ setup(name='guardgraph',
           'owlready2',
           'OSMPythonTools',
           'pygbif',
-          'folium'
+          'folium',
+          'pyproj'
       ],
       extras_require={
           'documentation': ['Sphinx']

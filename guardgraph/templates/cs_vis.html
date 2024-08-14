@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}GUARDEN-IX{% endblock %}
+
+{% block content %}
+<div class="container">
+  <h1>Case study {{ case_study_name }}</h1>
+
+{{ iframe|safe }}
+
+{% endblock content %}
+
+

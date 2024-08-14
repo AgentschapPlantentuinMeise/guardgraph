@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}Download GBIF cube{% endblock %}
+
+{% block content %}
+<div class="container">
+  {% if cube_job_id %}
+  <h1>GBIF cube ready</h1>
+
+  <p>Download <a href="https://www.gbif.org/occurrence/download/{{
+		       cube_job_id }}">here</a></p>
+  {% else %}
+  <h1>GBIF cube in preparation</h1>
+  <p>Refresh this page for update</p>
+  {% endif %}
+<hr>
+
+{% endblock content %}
+
+{% block scripts %}
+{{super()}}
+<script>
+</script>
+{% endblock %}

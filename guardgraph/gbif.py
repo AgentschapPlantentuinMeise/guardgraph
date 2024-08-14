@@ -86,11 +86,12 @@ def cube_query(email, gbif_user, gbif_pwd, geometry, speciesKeyList, query_templ
         raise Exception(r_cube.status_code)
     return r_cube.text # cube job id
 
-def download_cube(cube_job_id, prefix):
+def download_cube(cube_job_id, prefix, wait=True):
     while (r:=json.loads(requests.get(
         f"https://api.gbif.org/v1/occurrence/download/{cube_job_id}"
     ).text))['status'] == 'RUNNING':
-        time.sleep(60)
+        if wait: time.sleep(60)
+        else: break
     if r['status'] != 'SUCCEEDED':
         raise Exception(r['status'])
     urlretrieve(
@@ -101,3 +102,13 @@ def download_cube(cube_job_id, prefix):
 #curl --include --header "Content-Type: application/json" --data @query.json https://api.gbif.org/v1/occurrence/download/request/validate
 
 #curl --include --user 'maxime_ryckewaert':'password' --header "Content-Type: application/json" --data @query.json https://api.gbif.org/v1/occurrence/download/request
+
+
+
+
+
+
+
+
+
+

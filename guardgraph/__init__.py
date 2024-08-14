@@ -20,6 +20,7 @@ import folium
 from PIL import Image
 import pandas as pd
 from pygbif import species, occurrences
+from guardgraph.gbif import cube_query
 
 app = Flask(__name__)
 
@@ -29,7 +30,10 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 # max 50MB upload
 db = SQLAlchemy()
 fef = FEFset(frontend='bootstrap4')
 fef.nav_menu.append(
-    {'name':'Species interactions', 'url':'/'}
+    {'name':'Home', 'url':'/'}
+)
+fef.nav_menu.append(
+    {'name':'Species interactions', 'url':'/species/interactions/log'}
 )
 fef.nav_menu.append(
     {'name':'Case study cubes', 'url':'/species/interactors/guarden/cube'}
@@ -82,9 +86,8 @@ class GuardenCaseForm(FlaskForm):
     cubes = SelectField(
         'Cubes',
         choices=[
-            'With and without interactors',
-            'Only with interactors',
-            'Only species of interest'
+            'Only species of interest',
+            'Including first-order interacting species'
         ]
     )
     species_file = FileField('Species of interest', validators=[
@@ -98,8 +101,12 @@ class GuardenCaseForm(FlaskForm):
 with app.app_context():
     db.create_all()
 
-@app.route('/', methods=['GET','POST'])
+@app.route('/', methods=['GET'])
 def index():
+    return render_template('index.html')
+
+@app.route('/species/interactions/log', methods=['GET','POST'])
+def ix_log():
     mbg_coords = [50.9211519, 4.3317191]
     form=IXOForm()
     if form.validate_on_submit():
@@ -226,7 +233,6 @@ def query_interactions(species):
 
 @app.route('/species/interactors/cube', methods=['POST'])
 def get_interactors_cube():
-    from guardgraph.gbif import cube_query
     input_data = request.get_json()
     species_list = input_data['species']
     speciesKeyList = prep_speciesKey_list(species_list)
@@ -240,6 +246,7 @@ def get_interactors_cube():
 def prep_speciesKey_list(species_list, with_interactors=True):
     if with_interactors:
         interactors = query_interactions(species_list)
+    else: interactors = []
     speciesKeyList = set([
         (species.name_suggest(
             s, limit=1
@@ -259,6 +266,7 @@ def prep_speciesKey_list(species_list, with_interactors=True):
     except KeyError:
         print('All species known')
     speciesKeyList = [str(s) for s in speciesKeyList]
+    return speciesKeyList
 
 @app.route('/species/interactors/guarden/cube', methods=['GET','POST'])
 def guarden_cube():
@@ -271,25 +279,36 @@ def guarden_cube():
         species_list = list(
             species_df[species_df.columns[form.column.data]]
         )
-        speciesKeyList = prep_speciesKey_list(species_list)
-        cube_id = case_study_cube(
+        speciesKeyList = prep_speciesKey_list(
+            species_list,
+            with_interactors=form.cubes.data != 'Only species of interest'
+        )
+        cube_job_id = case_study_cube(
             form.case_study.data,
             speciesKeyList
         )
-        return redirect('/')
+        return redirect(f"/species/interactors/cube/{cube_job_id}")
     return render_template('gsc.html', form=form)
 
 @app.route('/species/interactors/cube/<cube_job_id>', methods=['GET'])
 def download_interactors_cube(cube_job_id):
-    from guardgraph.gfib import download_cube
-    download_cube(cube_job_id, prefix='/data/cubes')
-    return 'TODO pass download link'
+    from guardgraph.gbif import download_cube
+    try:
+        download_cube(
+            cube_job_id,
+            prefix=os.path.join(app.instance_path, 'cubes')+'/',
+            wait=False
+        )
+        return render_template('cd.html', cube_job_id=cube_job_id)
+    except Exception as e:
+        print(e)
+        return render_template('cd.html')
 
-def case_study_cube(case_study_name, speciesKeyList, polygon_simplifier=1000):
+def get_case_study_polygon(case_study_name, polygon_simplifier=1000):
     import tarfile
-    from shapely import wkt
+    from shapely import wkt, Polygon, MultiPolygon
     case_study_polygon_files = {
-        'France': 'cbnmed.wkt',
+        'France': 'cbnmed.wkt.txt',
         'Madagascar': 'pnrn.wkt.txt',
         'Greece': 'greece.wkt.txt',
         'Spain': 'barcelona.wkt.txt',
@@ -300,7 +319,7 @@ def case_study_cube(case_study_name, speciesKeyList, polygon_simplifier=1000):
     ]
     case_studies = tarfile.open(
         os.path.join(
-            app.static_path, 'guarden_case_studies.tar.xz'
+            os.path.dirname(__file__), 'static/data/guarden_case_studies.tar.xz'
         )
     )
     case_study_wkt = case_studies.extractfile(
@@ -311,6 +330,31 @@ def case_study_cube(case_study_name, speciesKeyList, polygon_simplifier=1000):
         case_study_polygon = case_study_polygon.simplify(
             polygon_simplifier, preserve_topology=False
         )
+    # Transform to WGS84 for GBIF
+    from shapely import wkt, Polygon, MultiPolygon
+    from pyproj import Transformer
+    transformer = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+    def transform_polygon(polygon, transformer):
+        if isinstance(polygon, Polygon):
+            return Polygon([
+                transformer.transform(x, y)
+                for x, y in polygon.exterior.coords
+            ])
+        elif isinstance(polygon, MultiPolygon):
+            return MultiPolygon([Polygon([
+                transformer.transform(x, y)
+                for x, y in pc.exterior.coords
+            ]) for pc in polygon.geoms])
+
+    case_study_polygon = transform_polygon(
+        case_study_polygon, transformer
+    )    
+    return case_study_polygon
+        
+def case_study_cube(case_study_name, speciesKeyList, polygon_simplifier=1000):
+    case_study_polygon = get_case_study_polygon(
+        case_study_name, polygon_simplifier
+    )
     cube_job_id = cube_query(
         'christophe.vanneste@plantentuinmeise.be',
         'cvanneste',
@@ -320,3 +364,28 @@ def case_study_cube(case_study_name, speciesKeyList, polygon_simplifier=1000):
     )
     return cube_job_id
 
+@app.route('/casestudy/<case_study_name>', methods=['GET'])
+def visualize_case_study(case_study_name):
+    from shapely import to_geojson
+    polygon = get_case_study_polygon(case_study_name.capitalize())
+    center_coords = [polygon.centroid.y, polygon.centroid.x]
+    tiles='https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png'
+    attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, Tiles style by <a href="https://www.hotosm.org/" target="_blank">Humanitarian OpenStreetMap Team</a> hosted by <a href="https://openstreetmap.fr/" target="_blank">OpenStreetMap France</a>'
+    map = folium.Map(location=center_coords, tiles=tiles, attr=attr, zoom_start=11)
+    folium.Marker(location=center_coords, icon=folium.Icon(color='darkgreen', icon='seedling', prefix='fa'),
+        popup=case_study_name
+    ).add_to(map)
+    # Add case study polygon
+    geo_j = folium.GeoJson(
+        data=to_geojson(polygon),
+        style_function=lambda x: {"fillColor": "orange"}
+    )
+    folium.Popup(case_study_name).add_to(geo_j)
+    geo_j.add_to(map)
+    # set the iframe width and height
+    map.get_root().width = "100%" #"800px"
+    map.get_root().height = "600px"
+    iframe = map.get_root()._repr_html_()
+    return render_template(
+        "cs_vis.html", iframe=iframe
+    )
