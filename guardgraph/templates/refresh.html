@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+
+{%- block metas %}
+{{super()}}
+<meta http-equiv="refresh" content="30">
+{%- endblock metas %}
+
+{%- block content %}
+<div class="container">
+  <p>
+    Results are being prepared.<br />
+    This page refreshes automatically every 30s until ready.
+  </p>
+</div>
+{%- endblock content %}

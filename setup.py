@@ -35,7 +35,8 @@ setup(name='guardgraph',
           'OSMPythonTools',
           'pygbif',
           'folium',
-          'pyproj'
+          'pyproj',
+          'celery[sqlalchemy]'
       ],
       extras_require={
           'documentation': ['Sphinx']

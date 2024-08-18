@@ -2,7 +2,7 @@ import os
 import base64
 from io import BytesIO
 import datetime
-from flask import Flask, jsonify, request, render_template, redirect
+from flask import Flask, jsonify, request, render_template, redirect, abort
 from guardgraph.graph import InteractionsGraph
 from flask_fefset import FEFset
 from flask_uxfab import UXFab
@@ -16,17 +16,30 @@ from flask_wtf.file import FileField, FileAllowed, FileRequired
 from werkzeug.utils import secure_filename
 from wtforms.validators import InputRequired, Optional
 import urllib.parse
+from shapely import wkt
 import folium
 from PIL import Image
 import pandas as pd
 from pygbif import species, occurrences
 from guardgraph.gbif import cube_query
+from guardgraph import tasks
+from celery.result import AsyncResult
 
 app = Flask(__name__)
 
+# Config
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
 app.config['SECRET_KEY'] = os.urandom(12).hex() # to allow csrf forms
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 # max 50MB upload
+app.config.from_mapping(
+    CELERY=dict(
+        broker_url='sqla+sqlite:////tmp/celery.db',
+        result_backend='db+sqlite:////tmp/celery.db',
+        task_ignore_result=True,
+    ),
+)
+
+# Flask extensions
 db = SQLAlchemy()
 fef = FEFset(frontend='bootstrap4')
 fef.nav_menu.append(
@@ -46,6 +59,7 @@ uxf = UXFab()
 uxf.init_app(app)
 iam = IAM(db)
 iam.init_app(app)
+celery_app = tasks.celery_init_app(app)
 
 # Data models
 class IXObservation(db.Model):
@@ -100,6 +114,10 @@ class GuardenCaseForm(FlaskForm):
 
 with app.app_context():
     db.create_all()
+
+@app.errorhandler(500)
+def internal_error(error):
+    return render_template('500.html'), 500
 
 @app.route('/', methods=['GET'])
 def index():
@@ -216,79 +234,47 @@ def describe_species():
 @app.route('/species/interactions', methods=['POST'])
 def get_interactions():
     species = request.get_json()
-    data = query_interactions(species)
+    data = tasks.query_interactions(species)
     return jsonify(data)
 
-def query_interactions(species):
-    ig = InteractionsGraph()
-    data = {
-        s: ig.run_query(
-            'MATCH (n:species)-[r]-(m:species) WHERE n.name STARTS WITH "'
-            +s.split()[0]+'" RETURN DISTINCT m'
-        )
-        for s in species
-    }
-    return data
-
-
 @app.route('/species/interactors/cube', methods=['POST'])
-def get_interactors_cube():
+def get_interactors_cube(task_id=None):
+    # TODO check species list
     input_data = request.get_json()
-    species_list = input_data['species']
-    speciesKeyList = prep_speciesKey_list(species_list)
     cube_job_id = cube_query(
         input_data['email'], input_data['gbif_user'],
         input_data['gbif_pwd'], input_data['polygon'],
-        speciesKeyList
+        input_data['species']
     )
     return jsonify({'cube_job_id': cube_job_id})
 
-def prep_speciesKey_list(species_list, with_interactors=True):
-    if with_interactors:
-        interactors = query_interactions(species_list)
-    else: interactors = []
-    speciesKeyList = set([
-        (species.name_suggest(
-            s, limit=1
-        ) or [{'speciesKey':None}]
-         )[0]['speciesKey'] for s in species_list
-    ]+[
-        (species.name_suggest(
-            i['m']['name'], limit=1
-        ) or [{'speciesKey':None}]
-         )[0]['speciesKey']
-        for s in interactors
-        for i in interactors[s]
-    ])
-    try:
-        speciesKeyList.remove(None)
-        print('GBIF unknown species were present')
-    except KeyError:
-        print('All species known')
-    speciesKeyList = [str(s) for s in speciesKeyList]
-    return speciesKeyList
-
 @app.route('/species/interactors/guarden/cube', methods=['GET','POST'])
-def guarden_cube():
-    form=GuardenCaseForm()
-    if form.validate_on_submit():
-        species_df = pd.read_csv(
-            form.species_file.data,
-            header=1 if form.header.data else None
-        )
-        species_list = list(
-            species_df[species_df.columns[form.column.data]]
-        )
-        speciesKeyList = prep_speciesKey_list(
-            species_list,
-            with_interactors=form.cubes.data != 'Only species of interest'
-        )
-        cube_job_id = case_study_cube(
-            form.case_study.data,
-            speciesKeyList
-        )
-        return redirect(f"/species/interactors/cube/{cube_job_id}")
-    return render_template('gsc.html', form=form)
+@app.route('/species/interactors/guarden/cube/<task_id>', methods=['GET'])
+def guarden_cube(task_id=None):
+    if task_id:
+        result = AsyncResult(task_id)
+        if not result.ready():
+            return render_template('refresh.html')
+        elif not result.successful():
+            abort(500)
+        else: return redirect(f"/species/interactors/cube/{result.result}")
+    else:
+        form=GuardenCaseForm()
+        if form.validate_on_submit():
+            species_df = pd.read_csv(
+                form.species_file.data,
+                header=1 if form.header.data else None
+            )
+            species_list = list(
+                species_df[species_df.columns[form.column.data]]
+            )
+            with_interactors = form.cubes.data != 'Only species of interest'
+            task_id = tasks.case_study_cube.delay(
+                form.case_study.data, species_list,
+                with_interactors=with_interactors
+            )
+            return redirect(f"/species/interactors/guarden/cube/{task_id}")
+        return render_template('gsc.html', form=form)
 
 @app.route('/species/interactors/cube/<cube_job_id>', methods=['GET'])
 def download_interactors_cube(cube_job_id):
@@ -304,70 +290,24 @@ def download_interactors_cube(cube_job_id):
         print(e)
         return render_template('cd.html')
 
-def get_case_study_polygon(case_study_name, polygon_simplifier=1000):
-    import tarfile
-    from shapely import wkt, Polygon, MultiPolygon
-    case_study_polygon_files = {
-        'France': 'cbnmed.wkt.txt',
-        'Madagascar': 'pnrn.wkt.txt',
-        'Greece': 'greece.wkt.txt',
-        'Spain': 'barcelona.wkt.txt',
-        'Cyprus': 'cyprus.wkt.txt'
-    }
-    case_study_polygon_file = case_study_polygon_files[
-        case_study_name
-    ]
-    case_studies = tarfile.open(
-        os.path.join(
-            os.path.dirname(__file__), 'static/data/guarden_case_studies.tar.xz'
-        )
-    )
-    case_study_wkt = case_studies.extractfile(
-        case_studies.getmember(case_study_polygon_file)
-    ).read()
-    case_study_polygon = wkt.loads(case_study_wkt)
-    if polygon_simplifier:
-        case_study_polygon = case_study_polygon.simplify(
-            polygon_simplifier, preserve_topology=False
-        )
-    # Transform to WGS84 for GBIF
-    from shapely import wkt, Polygon, MultiPolygon
-    from pyproj import Transformer
-    transformer = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
-    def transform_polygon(polygon, transformer):
-        if isinstance(polygon, Polygon):
-            return Polygon([
-                transformer.transform(x, y)
-                for x, y in polygon.exterior.coords
-            ])
-        elif isinstance(polygon, MultiPolygon):
-            return MultiPolygon([Polygon([
-                transformer.transform(x, y)
-                for x, y in pc.exterior.coords
-            ]) for pc in polygon.geoms])
-
-    case_study_polygon = transform_polygon(
-        case_study_polygon, transformer
-    )    
-    return case_study_polygon
-        
-def case_study_cube(case_study_name, speciesKeyList, polygon_simplifier=1000):
-    case_study_polygon = get_case_study_polygon(
-        case_study_name, polygon_simplifier
-    )
-    cube_job_id = cube_query(
-        'christophe.vanneste@plantentuinmeise.be',
-        'cvanneste',
-        open('gbif_pwd','rt').read().strip(),
-        case_study_polygon.wkt,
-        speciesKeyList
-    )
-    return cube_job_id
 
 @app.route('/casestudy/<case_study_name>', methods=['GET'])
-def visualize_case_study(case_study_name):
+def prep_visualize_case_study(case_study_name):
+    result = tasks.get_case_study_polygon.delay(
+                case_study_name.capitalize()
+    )
+    return redirect(f"/casestudy/{case_study_name}/{result.id}")
+
+
+@app.route('/casestudy/<case_study_name>/<case_study_task_id>', methods=['GET'])
+def visualize_case_study(case_study_name,case_study_task_id):
     from shapely import to_geojson
-    polygon = get_case_study_polygon(case_study_name.capitalize())
+    result = AsyncResult(case_study_task_id)
+    if not result.ready():
+        return render_template('refresh.html')
+    elif not result.successful():
+        abort(500)
+    polygon = wkt.loads(result.result)
     center_coords = [polygon.centroid.y, polygon.centroid.x]
     tiles='https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png'
     attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, Tiles style by <a href="https://www.hotosm.org/" target="_blank">Humanitarian OpenStreetMap Team</a> hosted by <a href="https://openstreetmap.fr/" target="_blank">OpenStreetMap France</a>'
@@ -389,3 +329,21 @@ def visualize_case_study(case_study_name):
     return render_template(
         "cs_vis.html", iframe=iframe
     )
+
+
+# Task examples
+#@app.get("/add")
+#def start_add() -> dict[str, object]:
+#    a = 1
+#    b = 2
+#    result = tasks.add_together.delay(a, b)
+#    return {"result_id": result.id}
+
+#@app.get("/result/<id>")
+#def task_result(id: str) -> dict[str, object]:
+#    result = AsyncResult(id)
+#    return {
+#        "ready": result.ready(),
+#        "successful": result.successful(),
+#        "value": result.result if result.ready() else None,
+#    }

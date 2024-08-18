@@ -20,6 +20,7 @@ services:
     volumes:
       - ${HOME}/data/gg:/data
       - ${HOME}/repos/guardgraph:/code
+  # celery -A guardgraph.celery_app worker --loglevel INFO
   init-neo4j:
     image: "neo4j:5.7.0"
     command: neo4j-admin database import full --delimiter='\t' --array-delimiter="|" --quote='"' --nodes=import/globi_nodes.tsv.gz --relationships=import/globi_merged_edges.tsv.gz --overwrite-destination neo4j
