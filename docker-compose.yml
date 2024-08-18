@@ -10,6 +10,7 @@ services:
       - ${HOME}/repos/guardgraph:/code
     environment:
       FLASK_APP: "guardgraph"
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672/
     depends_on:
       neo4j:
         condition: service_started
@@ -20,7 +21,23 @@ services:
     volumes:
       - ${HOME}/data/gg:/data
       - ${HOME}/repos/guardgraph:/code
-  # celery -A guardgraph.celery_app worker --loglevel INFO
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    command: ash -c "echo 'log.console.level = warning'
+      >>/etc/rabbitmq/conf.d/10-default-guest-user.conf && rabbitmq-server"
+    ports:
+      - 5672:5672
+      - 15672:15672
+  worker:
+    image: "localhost/web:latest"
+    depends_on:
+      - rabbitmq
+      - web
+    command: celery -A guardgraph.celery_app worker --loglevel INFO --concurrency=4
+    volumes:
+      - ${HOME}/repos/guardgraph:/code
+    environment:
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672/
   init-neo4j:
     image: "neo4j:5.7.0"
     command: neo4j-admin database import full --delimiter='\t' --array-delimiter="|" --quote='"' --nodes=import/globi_nodes.tsv.gz --relationships=import/globi_merged_edges.tsv.gz --overwrite-destination neo4j
@@ -53,9 +70,4 @@ services:
     depends_on:
       init-neo4j:
         condition: service_completed_successfully
-#  gis:
-#    image: "localhost/gis:latest"
-#    build: ./containers/gis
-#    volumes:
-#      - ${HOME}/data/gg:/data
-#      - ${HOME}/repos/guardgraph:/code
+
