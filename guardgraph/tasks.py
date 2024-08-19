@@ -235,3 +235,11 @@ def get_embeddings():
         embeddings.to_list(), index=embeddings.index
     )
     return embeddings
+
+@shared_task(ignore_result=False)
+def analyze_casestudy_data(gbif_cube):
+    import zipfile
+    import pandas as pd
+    zip = zipfile.ZipFile(gbif_cube)                      
+    zipfile = zip.open(zip.infolist()[0])
+    cube = pd.read_table(zipfile)

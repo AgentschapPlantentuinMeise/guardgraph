@@ -14,7 +14,7 @@ from neo4j.exceptions import Neo4jError
 from guardgraph.utils import download_file, Sorter
 
 class InteractionsGraph(object):
-    def __init__(self, password=None, passfile='/data/.neo4j_credentials', initialize_database=False):
+    def __init__(self, password=os.environ.get('NEO4J_CREDENTIAL'), passfile=None, initialize_database=False):
         self._passfile = passfile
         if password: self._password = password
         elif os.path.exists(self._passfile):
@@ -41,9 +41,8 @@ class InteractionsGraph(object):
             
     # neo4j admin methods
     def set_password(self, password):
-        # TODO configure for non-default old password
         driver = GraphDatabase.driver("neo4j://neo4j:7687",
-                              auth=("neo4j", "neo4j"))
+                              auth=("neo4j", self._password))
         with driver.session(database="system") as session:
             result = session.execute_write(
                 lambda tx: tx.run(f"ALTER CURRENT USER SET PASSWORD FROM 'neo4j' TO '{password}';"))

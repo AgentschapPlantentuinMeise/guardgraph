@@ -36,6 +36,11 @@ spec:
           env:
             - name: CELERY_BROKER_URL
               value: amqp://guest:guest@rabbitmq:5672/
+            - name: NEO4J_CREDENTIAL
+              valueFrom:
+                secretKeyRef:
+                  name: neo4j-credential
+                  key: neo4j-credential
           imagePullPolicy: Never
           image: localhost/web:latest
           name: worker

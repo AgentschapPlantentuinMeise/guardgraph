@@ -34,7 +34,8 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 # max 50MB upload
 app.config.from_mapping(
     CELERY=dict(
         broker_url=os.environ.get("CELERY_BROKER_URL"),#'sqla+sqlite:////tmp/celery.db'
-        result_backend='db+sqlite:////tmp/celery.db',
+        result_backend=os.environ.get("CELERY_RESULT_BACKEND", "rpc://"),
+        #f"db+sqlite:///{os.path.join(app.instance_path,'celery.db')}"
         task_ignore_result=True,
     ),
 )
@@ -213,8 +214,8 @@ def init_server():
     else:
         with open('INITIATED','wt') as fout:
             fout.write(str(datetime.datetime.now()))
-        ig = InteractionsGraph()
-        ig.set_random_password()
+        ig = InteractionsGraph(password='neo4j')
+        ig.set_password(os.environ.get('NEO4J_CREDENTIAL'))
         # Test and return
         return str(ig.relationships)
 
