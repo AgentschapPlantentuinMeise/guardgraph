@@ -14,15 +14,20 @@ from neo4j.exceptions import Neo4jError
 from guardgraph.utils import download_file, Sorter
 
 class InteractionsGraph(object):
-    def __init__(self, password=os.environ.get('NEO4J_CREDENTIAL'), passfile=None, initialize_database=False):
+    def __init__(
+            self, password=os.environ.get('NEO4J_CREDENTIAL'),
+            passfile=None, connect=True,
+            initialize_database=False):
         self._passfile = passfile
         if password: self._password = password
         elif os.path.exists(self._passfile):
             self._password = open(self._passfile).read().strip()
-        else:
+        elif connect:
             self._password = self.set_random_password()
-        self.driver = GraphDatabase.driver("neo4j://neo4j:7687",
-                              auth=("neo4j", self._password))
+        if connect: self.driver = GraphDatabase.driver(
+                "neo4j://neo4j:7687",
+                auth=("neo4j", self._password)
+        )
         if initialize_database:
             self.initialize_database()
 

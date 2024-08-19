@@ -87,12 +87,12 @@ def prep_speciesKey_list(species_list: list[str], with_interactors: bool = True)
         (species.name_suggest(
             s, limit=1
         ) or [{'speciesKey':None}]
-         )[0]['speciesKey'] for s in species_list
+         )[0].get('speciesKey') for s in species_list
     ]+[
         (species.name_suggest(
             i['m']['name'], limit=1
         ) or [{'speciesKey':None}]
-         )[0]['speciesKey']
+         )[0].get('speciesKey') # Only works for species
         for s in interactors
         for i in interactors[s]
     ])

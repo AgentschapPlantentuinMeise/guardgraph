@@ -7,6 +7,6 @@ def main():
         os.mkdir('/data/globi')
     if not os.path.exists('/data/globi/interactions.tsv.gz'):
         print('Downloading and preparing GloBI files')
-        ig = InteractionsGraph()
+        ig = InteractionsGraph(connect=False)
         ig.retrieve_data_files()
         ig.prep_admin_import_files()
