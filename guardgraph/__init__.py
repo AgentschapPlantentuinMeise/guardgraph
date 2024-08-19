@@ -33,7 +33,7 @@ app.config['SECRET_KEY'] = os.urandom(12).hex() # to allow csrf forms
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 # max 50MB upload
 app.config.from_mapping(
     CELERY=dict(
-        broker_url=os.environ.get("CELERY_BROKER_URL") #'sqla+sqlite:////tmp/celery.db',
+        broker_url=os.environ.get("CELERY_BROKER_URL"),#'sqla+sqlite:////tmp/celery.db'
         result_backend='db+sqlite:////tmp/celery.db',
         task_ignore_result=True,
     ),

@@ -36,6 +36,7 @@ setup(name='guardgraph',
           'pygbif',
           'folium',
           'pyproj',
+          'shapely',
           'celery[sqlalchemy]'
       ],
       extras_require={

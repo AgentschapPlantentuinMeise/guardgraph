@@ -4,7 +4,7 @@ services:
     image: "localhost/web:latest"
     build: .
     ports:
-      - "8000:5000"
+      - 8000:5000
     volumes:
       - ${HOME}/data/gg:/data
       - ${HOME}/repos/guardgraph:/code
