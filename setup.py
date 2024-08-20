@@ -38,7 +38,8 @@ setup(name='guardgraph',
           'folium',
           'pyproj',
           'shapely',
-          'celery[sqlalchemy]'
+          'celery[sqlalchemy]',
+          'pymysql'
       ],
       extras_require={
           'documentation': ['Sphinx']

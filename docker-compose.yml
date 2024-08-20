@@ -7,12 +7,13 @@ services:
       - 8000:5000
     volumes:
       - ${HOME}/data/gg:/data
-      - ${HOME}/repos/guardgraph/instance:/mbg/instance
+      - ${HOME}/data/worker:/mbg/instance/shared
       - ${HOME}/repos/guardgraph:/code
     environment:
       FLASK_APP: "guardgraph"
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672/
       NEO4J_CREDENTIAL: ${NEO4J_CREDENTIAL}
+      #MARIADB_PASSWORD: ${MARIADB_CREDENTIAL}
     depends_on:
       neo4j:
         condition: service_started
@@ -23,6 +24,9 @@ services:
     volumes:
       - ${HOME}/data/gg:/data
       - ${HOME}/repos/guardgraph:/code
+      - ${HOME}/data/worker:/mbg/instance/shared
+    #environment:
+    #  MARIADB_PASSWORD: ${MARIADB_CREDENTIAL}
   rabbitmq:
     image: rabbitmq:3-management-alpine
     command: ash -c "echo 'log.console.level = warning'
@@ -38,11 +42,12 @@ services:
     command: celery -A guardgraph.celery_app worker --loglevel INFO --concurrency=4
     volumes:
       - ${HOME}/data/gg:/data
-      - ${HOME}/repos/guardgraph/instance:/mbg/instance
+      - ${HOME}/data/worker:/mbg/instance/shared
       - ${HOME}/repos/guardgraph:/code
     environment:
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672/
       NEO4J_CREDENTIAL: ${NEO4J_CREDENTIAL}
+      #MARIADB_PASSWORD: ${MARIADB_CREDENTIAL}
   init-neo4j:
     image: "neo4j:5.7.0"
     command: neo4j-admin database import full --delimiter='\t' --array-delimiter="|" --quote='"' --nodes=import/globi_nodes.tsv.gz --relationships=import/globi_merged_edges.tsv.gz --overwrite-destination neo4j
@@ -75,4 +80,12 @@ services:
     depends_on:
       init-neo4j:
         condition: service_completed_successfully
-
+  #db:
+  #  image: mariadb:latest
+  #  ports:
+  #    - 3306:3306
+  #  environment:
+  #    MARIADB_ROOT_PASSWORD: ${MARIADB_CREDENTIAL}
+  #    MARIADB_PASSWORD: ${MARIADB_CREDENTIAL}
+  #    MARIADB_USER: guardin
+  #    MARIADB_DATABASE: guardin
