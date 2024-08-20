@@ -2,7 +2,7 @@ import os
 from celery import Celery, Task, shared_task
 from flask import Flask
 from pygbif import species, occurrences
-from guardgraph.graph import InteractionsGraph
+from guardgraph.graph import InteractionsGraph, EcoAnalysis
 
 def celery_init_app(app: Flask) -> Celery:
     class FlaskTask(Task):
@@ -128,16 +128,20 @@ def case_study_cube(
 def case_study_interactions(
         case_study_name: str, speciesList: list[str],
         polygon_simplifier: int = 1000) -> str:
+    import pandas as pd
+    import numpy as np
+    import matplotlib.pyplot as plt
+    if not os.path.exists(f'/mbg/instance/{case_study_name}'):
+        os.mkdir(f'/mbg/instance/{case_study_name}')
     ig = InteractionsGraph()
     interactions = pd.DataFrame({'species': speciesList})
-    interactions.species['ix_r_types'] = interactions.species.apply(
+    interactions['ix_r_types'] = interactions.species.apply(
 
         lambda x: ig.run_query(
 
             f"MATCH (n)-[r]-() WHERE n.name = '{x}' RETURN TYPE(r), COUNT(*)"
         )
-    )
-    
+    )    
     rtypes = {r:0 for r in ig.relationships}
     r_types = pd.DataFrame(
         list(interactions.ix_r_types.apply(
@@ -145,7 +149,7 @@ def case_study_interactions(
     r_types['total_r'] = r_types.sum(axis=1)
     r_types['species_name'] = interactions.species
     top20ix = r_types.set_index(
-        'species'
+        'species_name'
     ).sum().sort_values(ascending=False).index[1:21]
     fig, ax = plt.subplots(figsize=(10,5))
     sns.boxplot(
@@ -154,15 +158,10 @@ def case_study_interactions(
     )
     ax.set_xlabel('Interactions / species')
     fig.tight_layout()
-    fig.savefig('/data/results/ix_types_kaggle.png')
+    fig.savefig(f'/mbg/instance/{case_study_name}/ix_types_kaggle.svg')
     
     species_with_ix = list(
         r_types[r_types.total_r>0].species_name
-    )
-    ig.run_query(
-        '''MATCH (n) WHERE n.name IN $species_list RETURN COUNT(n)  
-     ''',
-        species_list=species_with_ix
     )
 
     ## Dyadic
@@ -209,15 +208,18 @@ def case_study_interactions(
     species_kingdom = ig.run_query('''MATCH (n) WHERE n.name IN $species_list
 RETURN n.kingdom,COUNT(*)''', species_list=species_with_ix)
 
-def get_embeddings():
     ea = EcoAnalysis(ig)
+    r_types_count = r_types.drop(
+        ['species_name','total_r'],axis=1
+    ).sum()
     ea.create_projection(
         'guardin_projection',
         ['species'],
         {
             r:{'properties':['occurrences']}
-            for r in dyadic_nodes['TYPE(r)'].value_counts().index
-        }, force=True
+            for r in r_types_count[r_types_count>0].index
+        },
+        force=True
     )
     ea.create_embedding(
         'guardin_projection',

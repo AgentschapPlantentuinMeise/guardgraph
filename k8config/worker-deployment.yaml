@@ -48,9 +48,14 @@ spec:
           volumeMounts:
             - mountPath: /code
               name: worker-hostpath0
+            - mountPath: /mbg/instance/shared
+              name: worker-hostpath1
       restartPolicy: Always
       volumes:
         - hostPath:
             path: /data/guardgraph
           name: worker-hostpath0
+        - hostPath:
+            path: /data/worker
+          name: worker-hostpath1
 status: {}

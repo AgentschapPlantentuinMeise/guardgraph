@@ -55,6 +55,12 @@ spec:
           imagePullPolicy: Never
           image: localhost/web:latest
           resources: {}
+          env:
+            - name: REFUTED_INTERACTIONS
+              valueFrom:
+                configMapKeyRef:
+                  name: guard-config
+                  key: refuted-interactions
           volumeMounts:
             - mountPath: /data
               name: neo4j-hostpath0

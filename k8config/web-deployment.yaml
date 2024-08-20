@@ -46,6 +46,8 @@ spec:
               name: web-hostpath0
             - mountPath: /code
               name: web-hostpath1
+            - mountPath: /mbg/instance/shared
+              name: web-hostpath2
       restartPolicy: Always
       volumes:
         - hostPath:
@@ -54,4 +56,7 @@ spec:
         - hostPath:
             path: /data/guardgraph
           name: web-hostpath1
+        - hostPath:
+            path: /data/worker
+          name: web-hostpath2
 status: {}
