@@ -210,7 +210,8 @@ def ix_log():
 def init_server():
     # This entrypoint only runs once and should be called when the db is ready
     if os.path.exists('INITIATED'):
-        return 'Already initiated'
+        ig = InteractionsGraph()
+        return f"Already initiated with {ig.relationships}"
     else:
         with open('INITIATED','wt') as fout:
             fout.write(str(datetime.datetime.now()))

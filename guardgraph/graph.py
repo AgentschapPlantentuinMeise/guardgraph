@@ -20,7 +20,7 @@ class InteractionsGraph(object):
             initialize_database=False):
         self._passfile = passfile
         if password: self._password = password
-        elif os.path.exists(self._passfile):
+        elif self.passfile and os.path.exists(self._passfile):
             self._password = open(self._passfile).read().strip()
         elif connect:
             self._password = self.set_random_password()
