@@ -28,11 +28,12 @@ class InteractionsGraph(object):
                 "neo4j://neo4j:7687",
                 auth=("neo4j", self._password)
         )
+        else: self.driver = None
         if initialize_database:
             self.initialize_database()
 
     def __del__(self):
-        self.driver.close()
+        if self.driver: self.driver.close()
 
     def run_query(self, q, database="neo4j", timeit=False, **kwargs):
         "Run query directly through session (implicit commit)"
