@@ -127,12 +127,15 @@ def case_study_cube(
 @shared_task(ignore_result=False)
 def case_study_interactions(
         case_study_name: str, speciesList: list[str],
-        polygon_simplifier: int = 1000) -> str:
+        polygon_simplifier: int = 1000,
+        interaction_cube_id: str|None = None) -> dict[str, object]:
     import pandas as pd
     import numpy as np
     import matplotlib.pyplot as plt
-    if not os.path.exists(f'/mbg/instance/{case_study_name}'):
-        os.mkdir(f'/mbg/instance/{case_study_name}')
+    import seaborn as sns
+    cs_dir = f'/mbg/instance/shared/{case_study_name}'
+    if not os.path.exists(cs_dir):
+        os.mkdir(cs_dir)
     ig = InteractionsGraph()
     interactions = pd.DataFrame({'species': speciesList})
     interactions['ix_r_types'] = interactions.species.apply(
@@ -141,7 +144,7 @@ def case_study_interactions(
 
             f"MATCH (n)-[r]-() WHERE n.name = '{x}' RETURN TYPE(r), COUNT(*)"
         )
-    )    
+    )
     rtypes = {r:0 for r in ig.relationships}
     r_types = pd.DataFrame(
         list(interactions.ix_r_types.apply(
@@ -150,7 +153,8 @@ def case_study_interactions(
     r_types['species_name'] = interactions.species
     top20ix = r_types.set_index(
         'species_name'
-    ).sum().sort_values(ascending=False).index[1:21]
+    ).sum().sort_values(ascending=False)
+    top20ix = top20ix[top20ix>0].index[1:21]
     fig, ax = plt.subplots(figsize=(10,5))
     sns.boxplot(
         data=r_types.set_index('species_name')[top20ix],
@@ -158,7 +162,11 @@ def case_study_interactions(
     )
     ax.set_xlabel('Interactions / species')
     fig.tight_layout()
-    fig.savefig(f'/mbg/instance/{case_study_name}/ix_types_kaggle.svg')
+    fig.savefig(f'{cs_dir}/ix_types_kaggle.svg')
+
+    output_files = {
+        'All interactions involving species of interest': f'/mbg/instance/shared/{case_study_name}/ix_types_kaggle.svg'
+    }
     
     species_with_ix = list(
         r_types[r_types.total_r>0].species_name
@@ -192,6 +200,13 @@ def case_study_interactions(
 ''',
                                  species_list=species_with_ix)
     triadic_nodes = pd.DataFrame(triadic_nodes)
+    triadic_nodes['TYPESTR'] = triadic_nodes.apply(
+        lambda x: str(
+            pd.Series([x['TYPE(r)'], x['TYPE(q)']])
+            .value_counts().sort_index().to_dict()
+        ), axis=1
+    )
+    
     triadic_closed_r = ig.run_query('''MATCH (n) WHERE n.name IN $species_list                                                                      
        WITH n MATCH (n)-[r]-(m)-[q]-(o)-[s]-(n) WHERE m.name IN $species_list  
        AND o.name in $species_list RETURN TYPE(r),TYPE(q),TYPE(s),COUNT(*)     
@@ -204,10 +219,32 @@ def case_study_interactions(
 ''',
                                     species_list=species_with_ix) 
     triadic_closed_nodes = pd.DataFrame(triadic_closed_nodes)
+    triadic_closed_nodes['TYPESTR'] = triadic_closed_nodes.apply(
+        lambda x: str(
+            pd.Series([x['TYPE(r)'], x['TYPE(q)'], x['TYPE(s)']])
+            .value_counts().sort_index().to_dict()
+        ), axis=1
+    )
+    
+    fig, axes = plt.subplots(nrows=3, ncols=1, figsize=((5,15)))
+    dyadic_nodes['TYPE(r)'].value_counts().plot.barh(ax=axes[0])
+    axes[0].set_ylabel('Dyadic relationships')
+    (triadic_nodes['TYPESTR'].value_counts()/2).plot.barh(ax=axes[1])
+    axes[1].set_ylabel('Open triads')
+    (triadic_closed_nodes['TYPESTR'].value_counts()/3).plot.barh(ax=axes[2])
+    axes[2].set_ylabel('Closed triads')
+    fig.tight_layout()
+    fig.savefig(f'{cs_dir}/internal_network_structure.svg')
+    output_files['Internal network structure'] = f'{cs_dir}/internal_network_structure.svg'
     
     species_kingdom = ig.run_query('''MATCH (n) WHERE n.name IN $species_list
 RETURN n.kingdom,COUNT(*)''', species_list=species_with_ix)
-
+    species_kingdom = pd.DataFrame(species_kingdom).rename(
+        {'n.kingdom':'Kingdom', 'COUNT(*)': 'Count'}, axis=1
+    )
+    output_files['Species kingdom distribution'] = f'{cs_dir}/species_kingdom.csv'
+    species_kingdom.to_csv(output_files['Species kingdom distribution'], index=False)
+    
     ea = EcoAnalysis(ig)
     r_types_count = r_types.drop(
         ['species_name','total_r'],axis=1
@@ -236,7 +273,16 @@ RETURN n.kingdom,COUNT(*)''', species_list=species_with_ix)
     embeddings = pd.DataFrame(
         embeddings.to_list(), index=embeddings.index
     )
-    return embeddings
+    output_files['Species embeddings'] = f'{cs_dir}/embeddings.csv'
+    embeddings.to_csv(output_files['Species embeddings'])
+
+    #if interaction_cube_id:
+        #TODO
+    
+    return {
+        'title': f'{case_study_name} interactions analysis',
+        'files': output_files
+    }
 
 @shared_task(ignore_result=False)
 def analyze_casestudy_data(gbif_cube):

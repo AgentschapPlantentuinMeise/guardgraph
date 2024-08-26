@@ -5,15 +5,12 @@
 {% block content %}
 <div class="container">
   <h1>{{ title }}</h1>
+  {% for output in outputs %}
+    <h2>{{ output }}</h2>
 
-  {% if form %}
-  {% block preform %}
-  {% endblock preform %}
-  {% import "uxfab/wtf.html" as wtf %}
-  {{ wtf.quick_form(form) }}
-  {% block postpreform %}
-  {% endblock postpreform %}
-  {% endif %}
+    {{ outputs[output] | safe }}
+
+  {% endfor %}
 <hr>
 
 {% endblock content %}

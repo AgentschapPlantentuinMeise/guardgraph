@@ -36,8 +36,8 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 # max 50MB upload
 app.config.from_mapping(
     CELERY=dict(
         broker_url=os.environ.get("CELERY_BROKER_URL"),#'sqla+sqlite:////tmp/celery.db'
-        result_backend=os.environ.get("CELERY_RESULT_BACKEND", "rpc://"),
-        #f"db+sqlite:///{os.path.join(app.instance_path,'celery.db')}"
+        result_backend=f"db+sqlite:///{os.path.join(app.instance_path,'shared/celery.db')}",
+        #os.environ.get("CELERY_RESULT_BACKEND", "rpc://"),
         task_ignore_result=True,
     ),
 )
@@ -49,10 +49,13 @@ fef.nav_menu.append(
     {'name':'Home', 'url':'/'}
 )
 fef.nav_menu.append(
-    {'name':'Species interactions', 'url':'/species/interactions/log'}
+    {'name':'Case study analysis', 'url':'/casestudy/analysis'}
 )
 fef.nav_menu.append(
     {'name':'Case study cubes', 'url':'/species/interactors/guarden/cube'}
+)
+fef.nav_menu.append(
+    {'name':'Species interactions', 'url':'/species/interactions/log'}
 )
 fef.settings['brand_name'] = 'GUARDEN-IX'
 fef.settings['logo_url'] = '/static/images/guarden_logo.png'
@@ -76,6 +79,7 @@ class IXObservation(db.Model):
     img_species_1 = db.Column(db.String)
     img_species_2 = db.Column(db.String)
     img_ix12 = db.Column(db.String)
+    img_ix1 = db.Column(db.String)
     thumbnail = db.Column(db.String)
     datetime = db.Column(db.DateTime)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"))
@@ -87,9 +91,10 @@ class IXOForm(FlaskForm):
     accuracy = HiddenField(default=-1)
     img_ix12 = FileField('Interaction image', validators=[InputRequired()])
     ix_type = StringField('Interaction type', validators=[InputRequired()])
+    img_ix1 = FileField('Post interaction image (same framing as inter)', validators=[InputRequired()])
     img_species_1 = FileField('Species 1 image')
     species_1 = StringField('Species 1')
-    img_species_2 = FileField('Species 2 image')
+    img_species_2 = FileField('Species 2 image (optional)')
     species_2 = StringField('Species 2')
     submit_button = SubmitField('Submit Interaction')
 
@@ -141,6 +146,7 @@ def ix_log():
             form.img_ix12.data.filename
         )
         # TODO check potential overwriting
+        # Interaction image
         form.img_ix12.data.save(
             os.path.join(app.instance_path, 'ix/' + ix_filename)
         )
@@ -150,12 +156,23 @@ def ix_log():
         image.thumbnail(MAX_SIZE)
         imgbytes = BytesIO()
         image.save(imgbytes, format='png')
-        imgbytes.seek(0)                                                                                                     
+        imgbytes.seek(0)                                  
         img_html = '<img src="data:image/png;base64,{}">'.format(
             base64.b64encode(imgbytes.read()).decode('UTF-8')
         )
         ix.thumbnail = img_html
-        
+
+        # Post interaction image
+        pix_filename = secure_filename(
+            form.img_ix1.data.filename
+        )
+        # TODO check potential overwriting
+        form.img_ix1.data.save(
+            os.path.join(app.instance_path, 'ix/' + pix_filename)
+        )
+        ix.img_ix1 = pix_filename
+
+        # Species 1
         if form.img_species_1.data:
             s1_filename = secure_filename(
                 form.img_species_1.data.filename
@@ -166,6 +183,7 @@ def ix_log():
             )
             ix.img_species_1 = s1_filename
         else: ix.img_species_1 = None
+        # Species 2
         if form.img_species_2.data:
             s2_filename = secure_filename(
                 form.img_species_2.data.filename
@@ -278,7 +296,7 @@ def guarden_cube(task_id=None):
                 with_interactors=with_interactors
             )
             return redirect(f"/species/interactors/guarden/cube/{task_id}")
-        return render_template('gsc.html', form=form)
+        return render_template('gsc.html', title='Case study cube', form=form)
 
 @app.route('/species/interactors/cube/<cube_job_id>', methods=['GET'])
 def download_interactors_cube(cube_job_id):
@@ -333,6 +351,54 @@ def visualize_case_study(case_study_name,case_study_task_id):
     return render_template(
         "cs_vis.html", iframe=iframe
     )
+
+
+@app.route('/casestudy/analysis', methods=['GET','POST'])
+@app.route('/casestudy/analysis/<task_id>', methods=['GET'])
+def guarden_case_analysis(task_id=None):
+    if task_id:
+        result = AsyncResult(task_id)
+        if not result.ready():
+            return render_template('refresh.html')
+        elif not result.successful():
+            abort(500)
+        else:
+            # Outputs
+            outputs = {}
+            for output in result.result['files']:
+                if result.result['files'][output].endswith('.svg'):
+                    with open(result.result['files'][output], 'rt') as f:
+                        outputs[output] = f.read()
+                elif result.result['files'][output].endswith('.csv'):
+                    outputs[output] = pd.read_csv(result.result['files'][output]).to_html()
+            #svg_bytes = io.BytesIO()
+            #fig.savefig(svg_bytes, format='svg')
+            #svg_bytes.getvalue().decode()
+            return render_template(
+                "analysis.html",
+                title = result.result['title'],
+                outputs = outputs
+            )
+
+            print(result.result)
+            return 'works'
+        #redirect(f"/casestudy/analysis/{result.result}")
+    else:
+        form=GuardenCaseForm()
+        del form.cubes
+        if form.validate_on_submit():
+            species_df = pd.read_csv(
+                form.species_file.data,
+                header=1 if form.header.data else None
+            )
+            species_list = list(
+                species_df[species_df.columns[form.column.data]]
+            )
+            task_id = tasks.case_study_interactions.delay(
+                form.case_study.data, species_list
+            )
+            return redirect(f"/casestudy/analysis/{task_id}")
+        return render_template('gsc.html', title='Case study analysis', form=form)
 
 
 # Task examples
