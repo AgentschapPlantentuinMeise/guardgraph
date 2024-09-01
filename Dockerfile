@@ -38,5 +38,10 @@ RUN cd /repos/graph-data-science-client && pip install .
 COPY . .
 RUN pip install .
 RUN pip install phonenumbers email_validator #TODO remove after Flask_IAM update
+
+# Intercubos
+RUN cd /repos && git clone https://github.com/AgentschapPlantentuinMeise/intercubos
+RUN cd /repos/intercubos && pip install .
+
 EXPOSE 5000
 CMD ["flask", "run"]

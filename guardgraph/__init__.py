@@ -400,6 +400,52 @@ def guarden_case_analysis(task_id=None):
             return redirect(f"/casestudy/analysis/{task_id}")
         return render_template('gsc.html', title='Case study analysis', form=form)
 
+@app.route('/mbg/grid', methods=['GET'])
+@app.route('/mbg/grid/<int:cell>', methods=['GET'])
+def mbg_interactions(cell=None):
+    from guardgraph.mbg import mbg_polygon
+    from intercubos.gridit import Grid
+    import folium
+    from folium.plugins import LocateControl
+    from shapely import to_geojson
+    from geopandas import GeoSeries
+    local_epsg = 3857 # for area respecting rotations # 4087
+    mbg_centroid = GeoSeries(mbg_polygon.centroid, crs=4326)
+    grid = Grid(*mbg_polygon.bounds, stepsize=50) # stepsize in meters
+    rotated_grid = grid.grid.copy(deep=True)
+    #rotated_grid['geometry'] = rotated_grid['geometry'].rotate(
+    #    angle=10, origin=mbg_polygon.centroid
+    #)
+    rotated_grid['geometry'] = rotated_grid.to_crs(
+        epsg=local_epsg
+    )['geometry'].rotate(
+        angle=25,
+        origin=mbg_centroid.to_crs(epsg=local_epsg).iloc[0]
+    ).to_crs(epsg=4326)
+    #grid.grid['geometry'] = grid.grid['geometry'].rotate(
+    #    angle=45, origin='centroid'
+    #)
+    (c_lat, c_lon) = (mbg_polygon.centroid.y, mbg_polygon.centroid.x)
+    m = folium.Map(
+        location=(c_lat,c_lon), prefer_canvas=True, zoom_start=12
+    )
+    folium.GeoJson(rotated_grid).add_to(m)
+    folium.GeoJson(
+        data=to_geojson(mbg_polygon),
+        style_function=lambda x: {"fillColor": "orange"}
+    ).add_to(m)
+    if cell is not None:
+        folium.GeoJson(
+            data=to_geojson(rotated_grid.iloc[cell].geometry),
+            style_function=lambda x: {"fillColor": "red", "borderColor": "red"}
+        ).add_to(m)
+        
+    # Show user on map
+    LocateControl(auto_start=True).add_to(m)
+    iframe = m.get_root()._repr_html_()
+    return render_template(
+        "cs_vis.html", iframe=iframe
+    )
 
 # Task examples
 #@app.get("/add")
