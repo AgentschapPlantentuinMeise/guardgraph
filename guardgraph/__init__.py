@@ -28,8 +28,8 @@ from celery.result import AsyncResult
 app = Flask(__name__)
 
 # Config
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
-#app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{os.path.join(app.instance_path,'shared/db.sqlite')}"
+#app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
+app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{os.path.join(app.instance_path,'shared/db.sqlite')}"
 #app.config["SQLALCHEMY_DATABASE_URI"] = f"mariadb+pymysql://guardin:{os.environ.get('MARIADB_PASSWORD')}@db:3306/"
 app.config['SECRET_KEY'] = os.urandom(12).hex() # to allow csrf forms
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 # max 50MB upload
