@@ -50,7 +50,7 @@ services:
       #MARIADB_PASSWORD: ${MARIADB_CREDENTIAL}
   init-neo4j:
     image: "neo4j:5.7.0"
-    command: "true" #neo4j-admin database import full --delimiter='\t' --array-delimiter="|" --quote='"' --nodes=import/globi_nodes.tsv.gz --relationships=import/globi_merged_edges.tsv.gz --overwrite-destination neo4j
+    command: neo4j-admin database import full --delimiter='\t' --array-delimiter="|" --quote='"' --nodes=import/globi_nodes.tsv.gz --relationships=import/globi_merged_edges.tsv.gz --overwrite-destination neo4j
     environment:
       NEO4J_apoc_export_file_enabled: "true"
       NEO4J_apoc_import_file_enabled: "true"
