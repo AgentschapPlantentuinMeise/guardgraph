@@ -258,7 +258,7 @@ def ix_log(cell=None):
     map.get_root().height = "600px"
     LocateControl(
         auto_start=True,
-        locateOptions={'enableHighAccuracy': True}
+        locateOptions={'enableHighAccuracy': True, 'watch': True}
     ).add_to(map)
     iframe = map.get_root()._repr_html_()
     return render_template(
