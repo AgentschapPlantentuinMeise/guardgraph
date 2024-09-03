@@ -256,7 +256,10 @@ def ix_log(cell=None):
     # set the iframe width and height
     map.get_root().width = "100%" #"800px"
     map.get_root().height = "600px"
-    LocateControl(auto_start=True).add_to(map)
+    LocateControl(
+        auto_start=True,
+        locateOptions={'enableHighAccuracy': True}
+    ).add_to(map)
     iframe = map.get_root()._repr_html_()
     return render_template(
         "ix.html", form=form, iframe=iframe
