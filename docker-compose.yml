@@ -20,13 +20,14 @@ services:
   init-web:
     image: "localhost/web:latest"
     build: .
-    command: guardgraph-init
+    command: 'sleep 10 && guardgraph-init'
     volumes:
       - ${HOME}/data/gg:/data
       - ${HOME}/repos/guardgraph:/code
       - ${HOME}/data/worker:/mbg/instance/shared
-    #environment:
-    #  MARIADB_PASSWORD: ${MARIADB_CREDENTIAL}
+    environment:
+      FLASK_APP: "guardgraph"
+      #MARIADB_PASSWORD: ${MARIADB_CREDENTIAL}
   rabbitmq:
     image: rabbitmq:3-management-alpine
     command: ash -c "echo 'log.console.level = warning'
@@ -50,7 +51,7 @@ services:
       #MARIADB_PASSWORD: ${MARIADB_CREDENTIAL}
   init-neo4j:
     image: "neo4j:5.7.0"
-    command: neo4j-admin database import full --delimiter='\t' --array-delimiter="|" --quote='"' --nodes=import/globi_nodes.tsv.gz --relationships=import/globi_merged_edges.tsv.gz --overwrite-destination neo4j
+    command: "true" #neo4j-admin database import full --delimiter='\t' --array-delimiter="|" --quote='"' --nodes=import/globi_nodes.tsv.gz --relationships=import/globi_merged_edges.tsv.gz --overwrite-destination neo4j
     environment:
       NEO4J_apoc_export_file_enabled: "true"
       NEO4J_apoc_import_file_enabled: "true"

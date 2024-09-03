@@ -131,9 +131,15 @@ def internal_error(error):
 def index():
     return render_template('index.html')
 
+@app.route('/species/interactions/log/<int:cell>', methods=['GET','POST'])
 @app.route('/species/interactions/log', methods=['GET','POST'])
-def ix_log():
-    mbg_coords = [50.9211519, 4.3317191]
+def ix_log(cell=None):
+    from guardgraph.mbg import mbg_polygon
+    from intercubos.gridit import Grid
+    import folium
+    from folium.plugins import LocateControl
+    from shapely import to_geojson
+    from geopandas import GeoSeries
     form=IXOForm()
     if form.validate_on_submit():
         coords = [form.latitude.data, form.longitude.data]
@@ -198,14 +204,43 @@ def ix_log():
         db.session.commit()
         form = None
     else:
-        coords = mbg_coords
         form_marker = None
     tiles='https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png'
     attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, Tiles style by <a href="https://www.hotosm.org/" target="_blank">Humanitarian OpenStreetMap Team</a> hosted by <a href="https://openstreetmap.fr/" target="_blank">OpenStreetMap France</a>'
+    coords = (mbg_polygon.centroid.y, mbg_polygon.centroid.x)
     map = folium.Map(location=coords, tiles=tiles, attr=attr, zoom_start=11)
+    # Make grid
+    local_epsg = 3857 # for area respecting rotations # 4087
+    mbg_centroid = GeoSeries(mbg_polygon.centroid, crs=4326)
+    grid = Grid(*mbg_polygon.bounds, stepsize=50) # stepsize in meters
+    # TODO rotate angle in grid init
+    rotated_grid = grid.grid.copy(deep=True)
+    #rotated_grid['geometry'] = rotated_grid['geometry'].rotate(
+    #    angle=10, origin=mbg_polygon.centroid
+    #)
+    rotated_grid['geometry'] = rotated_grid.to_crs(
+        epsg=local_epsg
+    )['geometry'].rotate(
+        angle=25,
+        origin=mbg_centroid.to_crs(epsg=local_epsg).iloc[0]
+    ).to_crs(epsg=4326)
+    #grid.grid['geometry'] = grid.grid['geometry'].rotate(
+    #    angle=45, origin='centroid'
+    #)
+    folium.GeoJson(rotated_grid).add_to(map)
+    folium.GeoJson(
+        data=to_geojson(mbg_polygon),
+        style_function=lambda x: {"fillColor": "orange"}
+    ).add_to(map)
+    if cell is not None:
+        folium.GeoJson(
+            data=to_geojson(rotated_grid.iloc[cell].geometry),
+            style_function=lambda x: {"fillColor": "red", "borderColor": "red"}
+        ).add_to(map)
+    
     #folium.Marker(coords, popup=popup_msg).add_to(map)
-    #https://fontawesome.com/search?m=free&o=r
-    folium.Marker(location=mbg_coords, icon=folium.Icon(color='darkgreen', icon='seedling', prefix='fa'),
+    #https://fontawesome.com/search?m=free&o=r    
+    folium.Marker(location=coords, icon=folium.Icon(color='darkgreen', icon='seedling', prefix='fa'),
         popup='A botanic garden with a lot of interactions'
     ).add_to(map)
     for ix in IXObservation.query.all():
@@ -221,6 +256,7 @@ def ix_log():
     # set the iframe width and height
     map.get_root().width = "100%" #"800px"
     map.get_root().height = "600px"
+    LocateControl(auto_start=True).add_to(map)
     iframe = map.get_root()._repr_html_()
     return render_template(
         "ix.html", form=form, iframe=iframe
@@ -312,7 +348,6 @@ def download_interactors_cube(cube_job_id):
         print(e)
         return render_template('cd.html')
 
-
 @app.route('/casestudy/<case_study_name>', methods=['GET'])
 def prep_visualize_case_study(case_study_name):
     result = tasks.get_case_study_polygon.delay(
@@ -351,7 +386,6 @@ def visualize_case_study(case_study_name,case_study_task_id):
     return render_template(
         "cs_vis.html", iframe=iframe
     )
-
 
 @app.route('/casestudy/analysis', methods=['GET','POST'])
 @app.route('/casestudy/analysis/<task_id>', methods=['GET'])
@@ -400,6 +434,27 @@ def guarden_case_analysis(task_id=None):
             return redirect(f"/casestudy/analysis/{task_id}")
         return render_template('gsc.html', title='Case study analysis', form=form)
 
+@app.route('/cube/analysis/<cube_id>', methods=['GET','POST'])
+@app.route('/cube/analysis/<cube_id>/<task_id>', methods=['GET'])
+def guarden_cube_analysis(cube_id,task_id=None):
+    if task_id:
+        result = AsyncResult(task_id)
+        if not result.ready():
+            return render_template('refresh.html')
+        elif not result.successful():
+            abort(500)
+        else:
+            # Output
+            iframe = result.result
+            return render_template(
+                "cs_vis.html", iframe=iframe
+            )
+    else:
+        task_id = tasks.analyze_casestudy_data.delay(
+            os.path.join(app.instance_path,f'cubes/{cube_id}.zip')
+        )
+        return redirect(f"/cube/analysis/{cube_id}/{task_id}")
+    
 @app.route('/mbg/grid', methods=['GET'])
 @app.route('/mbg/grid/<int:cell>', methods=['GET'])
 def mbg_interactions(cell=None):
@@ -412,6 +467,7 @@ def mbg_interactions(cell=None):
     local_epsg = 3857 # for area respecting rotations # 4087
     mbg_centroid = GeoSeries(mbg_polygon.centroid, crs=4326)
     grid = Grid(*mbg_polygon.bounds, stepsize=50) # stepsize in meters
+    # TODO rotate angle in grid init
     rotated_grid = grid.grid.copy(deep=True)
     #rotated_grid['geometry'] = rotated_grid['geometry'].rotate(
     #    angle=10, origin=mbg_polygon.centroid

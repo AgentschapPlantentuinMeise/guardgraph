@@ -286,8 +286,53 @@ RETURN n.kingdom,COUNT(*)''', species_list=species_with_ix)
 
 @shared_task(ignore_result=False)
 def analyze_casestudy_data(gbif_cube):
+    import re
     import zipfile
     import pandas as pd
+    from shapely import Point
+    import geopandas as gpd
+    from intercubos.gridit import Grid
+    import folium
+    from folium import plugins
+    # Prep data
     zip = zipfile.ZipFile(gbif_cube)                      
     zipfile = zip.open(zip.infolist()[0])
     cube = pd.read_table(zipfile)
+    eeacellcode = re.compile(
+        r'(?P<grid_size>\d)+kmE(?P<longitude>\d+)N(?P<latitude>\d+)'
+    )
+    cube = pd.concat(
+        (
+            cube,
+            cube.eeacellcode.apply(
+                lambda x:  pd.Series(eeacellcode.match(x).groupdict()))
+        ), axis=1
+    )
+    cube.latitude = cube.latitude.astype(int)*1000 # *1000 because 1000m grid cell size
+    cube.longitude = cube.longitude.astype(int)*1000
+    cube = gpd.GeoDataFrame(
+        cube,
+        geometry=cube.apply(
+            lambda x: Point(x.latitude,x.longitude),axis=1
+        ), crs=3035#4326
+    ).to_crs(epsg=4326)
+    grid = Grid(
+        *cube.total_bounds,
+        # lat and lon still in 3035 coords
+        #cube.latitude.min(), cube.longitude.min(),
+        #cube.latitude.max(), cube.longitude.max(),
+        stepsize=1000
+    )
+    grid.assign_to_grid(cube)
+    grid.remove_empty_grid_cells()
+    heat_data = [[point.xy[1][0], point.xy[0][0]] for point in cube.geometry]
+
+    # prep map
+    m = folium.Map(
+        location=(cube.latitude.mean(),cube.longitude.mean()),
+        prefer_canvas=True, zoom_start=12
+    )
+    plugins.HeatMap(heat_data).add_to(m)
+    iframe = m.get_root()._repr_html_()
+    return iframe
+
