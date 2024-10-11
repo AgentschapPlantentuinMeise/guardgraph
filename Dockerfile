@@ -3,7 +3,7 @@ FROM python:3.12-rc-bullseye
 WORKDIR /mbg
 RUN mkdir -p /mbg/instance/ix
 RUN mkdir -p /mbg/instance/cubes
-ENV FLASK_APP=guardgraph
+ENV FLASK_APP=guardgraph:create_app
 ENV FLASK_RUN_HOST=0.0.0.0
 #RUN apk add --no-cache gcc musl-dev linux-headers # g++ py3-numpy
 # for graphdatascience dependency

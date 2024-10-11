@@ -16,6 +16,15 @@ def celery_init_app(app: Flask) -> Celery:
     app.extensions["celery"] = celery_app
     return celery_app
 
+# Utility function
+def species_name_suggest(name):
+    try: return (
+            species.name_suggest(
+                name, limit=1
+            ) or [{'speciesKey':None}]
+    )[0].get('speciesKey')
+    except: return None
+    
 #@shared_task(ignore_result=False)
 #def add_together(a: int, b: int) -> int:
 #    return a + b
@@ -68,31 +77,34 @@ def get_case_study_polygon(case_study_name: str, polygon_simplifier: int = 1000)
     )
     return case_study_polygon.wkt
 
-def query_interactions(species):
+def query_interactions(species, second_order=False):
     ig = InteractionsGraph()
     data = {
-        s: ig.run_query(
-            'MATCH (n:species)-[r]-(m:species) WHERE n.name STARTS WITH "'
-            +s.split()[0]+'" RETURN DISTINCT m'
-        )
-        for s in species
-    }
-    return data
+            s: ig.run_query(
+                'MATCH (n:species)-[r]-(m:species) WHERE n.name STARTS WITH "'
+                +s.split()[0]+'" RETURN DISTINCT m.name AS name'
+            )
+            for s in species
+        }
+    if second_order:
+        data_2x = {
+            s: ig.run_query(
+                'MATCH (n:species)-[r1]-(intermediate:species)-[r2]-(m:species) WHERE n.name STARTS WITH "'
+                +s.split()[0]+'" RETURN DISTINCT m.name AS name'
+            )
+            for s in species
+        }        
+    return (data, data_2x) if second_order else data
 
 def prep_speciesKey_list(species_list: list[str], with_interactors: bool = True) -> list[str]:
     if with_interactors:
         interactors = query_interactions(species_list)
     else: interactors = []
     speciesKeyList = set([
-        (species.name_suggest(
-            s, limit=1
-        ) or [{'speciesKey':None}]
-         )[0].get('speciesKey') for s in species_list
+        species_name_suggest(s) for s in species_list
     ]+[
-        (species.name_suggest(
-            i['m']['name'], limit=1
-        ) or [{'speciesKey':None}]
-         )[0].get('speciesKey') # Only works for species
+        #TODO interface changed, does no longer contain 'm'
+        species_name_suggest(i['m']['name'])
         for s in interactors
         for i in interactors[s]
     ])
@@ -124,6 +136,57 @@ def case_study_cube(
     )
     return cube_job_id
 
+@shared_task(ignore_result=False)
+def interaction_embedding(speciesList: list[str]):
+    import pandas as pd
+    import numpy as np
+    ig = InteractionsGraph()
+    interactions = pd.DataFrame({'species': speciesList})
+    interactions['ix_r_types'] = interactions.species.apply(
+
+        lambda x: ig.run_query(
+
+            f"MATCH (n)-[r]-() WHERE n.name = '{x}' RETURN TYPE(r), COUNT(*)"
+        )
+    )
+    rtypes = {r:0 for r in ig.relationships}
+    r_types = pd.DataFrame(
+        list(interactions.ix_r_types.apply(
+            lambda x: rtypes|{r['TYPE(r)']:r['COUNT(*)'] for r in x})),
+        index=interactions.index)
+    r_types['total_r'] = r_types.sum(axis=1)
+    r_types['species_name'] = interactions.species
+
+    ea = EcoAnalysis(ig)
+    r_types_count = r_types.drop(
+        ['species_name','total_r'],axis=1
+    ).sum()
+    ea.create_projection(
+        'guardin_projection',
+        ['species'],
+        {
+            r:{'properties':['occurrences']}
+            for r in r_types_count[r_types_count>0].index
+        },
+        force=True
+    )
+    ea.create_embedding(
+        'guardin_projection',
+        embeddingDimension=10, force=True
+    )
+    embeddings = ea.get_embeddings(
+        'guardin_projection',
+        species_list=speciesList, plot=False
+    )
+    ea.drop_projection('guardin_projection')
+    embeddings = embeddings.groupby('name').apply(
+        lambda g:  np.mean(np.stack(g.embedding), axis=0)
+    )
+    embeddings = pd.DataFrame(
+        embeddings.to_list(), index=embeddings.index
+    )
+    return embeddings.T.to_dict()
+    
 @shared_task(ignore_result=False)
 def case_study_interactions(
         case_study_name: str, speciesList: list[str],
@@ -226,7 +289,7 @@ def case_study_interactions(
         ), axis=1
     )
     
-    fig, axes = plt.subplots(nrows=3, ncols=1, figsize=((5,15)))
+    fig, axes = plt.subplots(nrows=1, ncols=3, figsize=((15,5)))
     dyadic_nodes['TYPE(r)'].value_counts().plot.barh(ax=axes[0])
     axes[0].set_ylabel('Dyadic relationships')
     (triadic_nodes['TYPESTR'].value_counts()/2).plot.barh(ax=axes[1])
@@ -294,12 +357,20 @@ def analyze_casestudy_data(gbif_cube):
     from intercubos.gridit import Grid
     import folium
     from folium import plugins
+    from pyproj import Transformer
+    
     # Prep data
-    zip = zipfile.ZipFile(gbif_cube)                      
-    zipfile = zip.open(zip.infolist()[0])
+    zip_archive = zipfile.ZipFile(gbif_cube)                      
+    zipfile = zip_archive.open(zip_archive.infolist()[0])
     cube = pd.read_table(zipfile)
+    transformer = Transformer.from_crs(
+        "EPSG:3035", "EPSG:4326"
+    )
+    
+    # Extract lat lon eea reference
+    #https://www.eea.europa.eu/data-and-maps/data/eea-reference-grids-2/about-the-eea-reference-grid/eea_reference_grid_v1.pdf/download
     eeacellcode = re.compile(
-        r'(?P<grid_size>\d)+kmE(?P<longitude>\d+)N(?P<latitude>\d+)'
+        r'(?P<grid_size>\d)+kmE(?P<eea_lon>\d+)N(?P<eea_lat>\d+)'
     )
     cube = pd.concat(
         (
@@ -308,14 +379,36 @@ def analyze_casestudy_data(gbif_cube):
                 lambda x:  pd.Series(eeacellcode.match(x).groupdict()))
         ), axis=1
     )
-    cube.latitude = cube.latitude.astype(int)*1000 # *1000 because 1000m grid cell size
-    cube.longitude = cube.longitude.astype(int)*1000
+    
+    # Transform to WGS84
+    #cube.latitude = cube.latitude.astype(int)*1000#-3210000
+    # *1000 because 1000m grid cell size
+    #cube.longitude = cube.longitude.astype(int)*1000#-4321000
+    cube = pd.concat(
+        (
+            cube,
+            cube.apply(
+                lambda x: pd.Series(
+                    dict(
+                        zip(
+                            ('latitude','longitude'),
+                            transformer.transform(
+                                int(x.eea_lat)*1000,
+                                int(x.eea_lon)*1000
+                            )
+                        )
+                    )
+                ), axis=1)
+        ), axis=1
+    )
+
+    # Make geo dataframe
     cube = gpd.GeoDataFrame(
         cube,
         geometry=cube.apply(
             lambda x: Point(x.latitude,x.longitude),axis=1
-        ), crs=3035#4326
-    ).to_crs(epsg=4326)
+        ), crs=4326 #3035
+    )#.to_crs(epsg=4326)
     grid = Grid(
         *cube.total_bounds,
         # lat and lon still in 3035 coords
@@ -325,7 +418,7 @@ def analyze_casestudy_data(gbif_cube):
     )
     grid.assign_to_grid(cube)
     grid.remove_empty_grid_cells()
-    heat_data = [[point.xy[1][0], point.xy[0][0]] for point in cube.geometry]
+    heat_data = [[point.xy[0][0], point.xy[1][0]] for point in cube.geometry]
 
     # prep map
     m = folium.Map(

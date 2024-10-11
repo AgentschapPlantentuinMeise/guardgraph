@@ -66,3 +66,8 @@ With cypher batches:
 | 10000   | 10000      | 16 s         | 13.4 ms |
 | 100000  | 10000      | 23min 4s     |         |
 | 100000  | 50000      | 22min 21s    |         |
+
+# Get database from minikube
+
+    scp -i $(minikube ssh-key) docker@$(minikube ip):/data/worker/db.sqlite backup
+    
