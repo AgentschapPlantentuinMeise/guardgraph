@@ -10,7 +10,7 @@ services:
       - ${HOME}/data/worker:/mbg/instance/shared
       - ${HOME}/repos/guardgraph:/code
     environment:
-      FLASK_APP: "guardgraph"
+      FLASK_APP: "guardgraph:create_app"
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672/
       NEO4J_CREDENTIAL: ${NEO4J_CREDENTIAL}
       #MARIADB_PASSWORD: ${MARIADB_CREDENTIAL}
@@ -26,7 +26,7 @@ services:
       - ${HOME}/repos/guardgraph:/code
       - ${HOME}/data/worker:/mbg/instance/shared
     environment:
-      FLASK_APP: "guardgraph"
+      FLASK_APP: "guardgraph:create_app"
       #MARIADB_PASSWORD: ${MARIADB_CREDENTIAL}
   rabbitmq:
     image: rabbitmq:3-management-alpine

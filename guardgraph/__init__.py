@@ -311,6 +311,12 @@ def create_app(config_filename=None):
         species = request.get_json()
         data = tasks.query_interactions(species)
         return jsonify(data)
+
+    @app.route('/species/interaction/citations', methods=['POST'])
+    def get_interaction_citations():
+        species = request.get_json()
+        data = tasks.query_interaction_citations(species)
+        return jsonify(data)
     
     @app.route('/species/inter2x', methods=['POST'])
     def get_2x_interactions():

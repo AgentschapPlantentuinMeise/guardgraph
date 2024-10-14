@@ -56,6 +56,8 @@ spec:
           image: localhost/web:latest
           resources: {}
           env:
+            - name: FLASK_APP
+              value: "guardgraph:create_app"
             - name: REFUTED_INTERACTIONS
               valueFrom:
                 configMapKeyRef:

@@ -96,6 +96,17 @@ def query_interactions(species, second_order=False):
         }        
     return (data, data_2x) if second_order else data
 
+def query_interaction_citations(species, second_order=False):
+    ig = InteractionsGraph()
+    data = {
+            s: ig.run_query(
+                'MATCH (n:species)-[r]-(m:species) WHERE n.name STARTS WITH "'
+                +s.split()[0]+'" RETURN DISTINCT r.referenceDoi AS doi, r.type AS ixtype, m.name AS ixpartner'
+            )
+            for s in species
+        }
+    return data
+
 def prep_speciesKey_list(species_list: list[str], with_interactors: bool = True) -> list[str]:
     if with_interactors:
         interactors = query_interactions(species_list)
