@@ -28,7 +28,7 @@ spec:
         - args:
             - celery
             - -A
-            - guardgraph.celery_app
+            - guardgraph.make_celery.celery_app
             - worker
             - --loglevel
             - INFO

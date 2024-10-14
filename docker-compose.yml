@@ -40,7 +40,7 @@ services:
     depends_on:
       - rabbitmq
       - web
-    command: celery -A guardgraph.celery_app worker --loglevel INFO --concurrency=4
+    command: celery -A guardgraph.make_celery.celery_app worker --loglevel INFO --concurrency=4
     volumes:
       - ${HOME}/data/gg:/data
       - ${HOME}/data/worker:/mbg/instance/shared
