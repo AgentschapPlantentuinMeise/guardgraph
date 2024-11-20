@@ -115,7 +115,7 @@ def prep_speciesKey_list(species_list: list[str], with_interactors: bool = True)
         species_name_suggest(s) for s in species_list
     ]+[
         #TODO interface changed, does no longer contain 'm'
-        species_name_suggest(i['m']['name'])
+        species_name_suggest(i['ixpartner'])
         for s in interactors
         for i in interactors[s]
     ])
@@ -139,8 +139,8 @@ def case_study_cube(
     ))
     speciesKeyList = prep_speciesKey_list(speciesList, with_interactors)
     cube_job_id = cube_query(
-        'christophe.vanneste@plantentuinmeise.be',
-        'cvanneste',
+        'mbg@guardin.net',
+        'meisebg',
         open('gbif_pwd','rt').read().strip(),
         case_study_polygon.wkt,
         speciesKeyList
