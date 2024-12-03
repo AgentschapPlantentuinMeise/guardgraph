@@ -115,7 +115,7 @@ def prep_speciesKey_list(species_list: list[str], with_interactors: bool = True)
         species_name_suggest(s) for s in species_list
     ]+[
         #TODO interface changed, does no longer contain 'm'
-        species_name_suggest(i['ixpartner'])
+        species_name_suggest(i['name'])
         for s in interactors
         for i in interactors[s]
     ])
