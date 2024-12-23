@@ -82,6 +82,36 @@ def query_interactions(species, second_order=False):
     data = {
             s: ig.run_query(
                 'MATCH (n:species)-[r]-(m:species) WHERE n.name STARTS WITH "'
+                +' '.join(s.split()[:2])+'" RETURN DISTINCT m.name AS name'
+            )
+            for s in species
+        }
+    if second_order:
+        data_2x = {
+            s: ig.run_query(
+                'MATCH (n:species)-[r1]-(intermediate:species)-[r2]-(m:species) WHERE n.name STARTS WITH "'
+                +' '.join(s.split()[:2])+'" RETURN DISTINCT m.name AS name'
+            )
+            for s in species
+        }        
+    return (data, data_2x) if second_order else data
+
+def query_interaction_citations(species, second_order=False):
+    ig = InteractionsGraph()
+    data = {
+            s: ig.run_query(
+                'MATCH (n:species)-[r]-(m:species) WHERE n.name STARTS WITH "'
+                +' '.join(s.split()[:2])+'" RETURN DISTINCT r.referenceDoi AS doi, r.type AS ixtype, m.name AS ixpartner'
+            )
+            for s in species
+        }
+    return data
+
+def query_genus_interactions(species, second_order=False):
+    ig = InteractionsGraph()
+    data = {
+            s: ig.run_query(
+                'MATCH (n:species)-[r]-(m:species) WHERE n.name STARTS WITH "'
                 +s.split()[0]+'" RETURN DISTINCT m.name AS name'
             )
             for s in species
@@ -96,7 +126,7 @@ def query_interactions(species, second_order=False):
         }        
     return (data, data_2x) if second_order else data
 
-def query_interaction_citations(species, second_order=False):
+def query_genus_interaction_citations(species, second_order=False):
     ig = InteractionsGraph()
     data = {
             s: ig.run_query(

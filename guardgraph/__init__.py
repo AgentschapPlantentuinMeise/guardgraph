@@ -281,6 +281,48 @@ def create_app(config_filename=None):
             ig.set_password(os.environ.get('NEO4J_CREDENTIAL'))
             # Test and return
             return str(ig.relationships)
+
+    @app.route('/genus', methods=['POST'])
+    def describe_genus():
+        """
+        Example:
+    
+            import requests
+            url = 'https://www.guardin.net/species'
+            # or local docker compose: 'http://web:5000/species'
+            requests.post(url, json=[
+              'Accipiter nisus','Acrocephalus arundinaceus'
+            ]).json()
+    
+        """
+        geni = request.get_json()
+        ig = InteractionsGraph()
+        data = {
+            g: ig.run_query(
+                'MATCH (n:species)-[r]-() WHERE n.name STARTS WITH "'
+                +g.split()[0]+'" RETURN COUNT(r) AS count'
+            )
+            for g in geni
+        }
+        return jsonify(data)
+    
+    @app.route('/genus/interactions', methods=['POST'])
+    def get_genus_interactions():
+        geni = request.get_json()
+        data = tasks.query_interactions(geni)
+        return jsonify(data)
+
+    @app.route('/genus/interaction/citations', methods=['POST'])
+    def get_genus_interaction_citations():
+        geni = request.get_json()
+        data = tasks.query_interaction_citations(geni)
+        return jsonify(data)
+    
+    @app.route('/genus/inter2x', methods=['POST'])
+    def get_2x_genus_interactions():
+        geni = request.get_json()
+        data = tasks.query_interactions(geni, second_order=True)
+        return jsonify(data)
     
     @app.route('/species', methods=['POST'])
     def describe_species():
@@ -300,7 +342,7 @@ def create_app(config_filename=None):
         data = {
             s: ig.run_query(
                 'MATCH (n:species)-[r]-() WHERE n.name STARTS WITH "'
-                +s.split()[0]+'" RETURN COUNT(r) AS count'
+                +' '.join(s.split()[:2])+'" RETURN COUNT(r) AS count'
             )
             for s in species
         }
