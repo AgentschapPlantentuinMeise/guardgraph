@@ -304,7 +304,7 @@ def case_study_interactions(
 ''',
                                  species_list=species_with_ix)
     triadic_nodes = pd.DataFrame(triadic_nodes)
-    triadic_nodes['TYPESTR'] = triadic_nodes.apply(
+    if not triadic_nodes,empty: triadic_nodes['TYPESTR'] = triadic_nodes.apply(
         lambda x: str(
             pd.Series([x['TYPE(r)'], x['TYPE(q)']])
             .value_counts().sort_index().to_dict()
@@ -323,7 +323,7 @@ def case_study_interactions(
 ''',
                                     species_list=species_with_ix) 
     triadic_closed_nodes = pd.DataFrame(triadic_closed_nodes)
-    triadic_closed_nodes['TYPESTR'] = triadic_closed_nodes.apply(
+    if not triadic_closed_nodes.empty: triadic_closed_nodes['TYPESTR'] = triadic_closed_nodes.apply(
         lambda x: str(
             pd.Series([x['TYPE(r)'], x['TYPE(q)'], x['TYPE(s)']])
             .value_counts().sort_index().to_dict()
@@ -331,11 +331,13 @@ def case_study_interactions(
     )
     
     fig, axes = plt.subplots(nrows=1, ncols=3, figsize=((15,5)))
-    dyadic_nodes['TYPE(r)'].value_counts().plot.barh(ax=axes[0])
+    if not dyadic_nodes.empty:
+        dyadic_nodes['TYPE(r)'].value_counts(
+        ).plot.barh(ax=axes[0])
     axes[0].set_ylabel('Dyadic relationships')
-    (triadic_nodes['TYPESTR'].value_counts()/2).plot.barh(ax=axes[1])
+    if not triadic_nodes.empty: (triadic_nodes['TYPESTR'].value_counts()/2).plot.barh(ax=axes[1])
     axes[1].set_ylabel('Open triads')
-    (triadic_closed_nodes['TYPESTR'].value_counts()/3).plot.barh(ax=axes[2])
+    if not triadic_closed_nodes.empty: (triadic_closed_nodes['TYPESTR'].value_counts()/3).plot.barh(ax=axes[2])
     axes[2].set_ylabel('Closed triads')
     fig.tight_layout()
     fig.savefig(f'{cs_dir}/internal_network_structure.svg')

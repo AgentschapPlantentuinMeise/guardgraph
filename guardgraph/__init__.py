@@ -275,10 +275,14 @@ def create_app(config_filename=None):
             ig = InteractionsGraph()
             return f"Already initiated with {ig.relationships}"
         else:
-            with open('INITIATED','wt') as fout:
-                fout.write(str(datetime.datetime.now()))
             ig = InteractionsGraph(password='neo4j')
-            ig.set_password(os.environ.get('NEO4J_CREDENTIAL'))
+            new_password = os.environ.get('NEO4J_CREDENTIAL')
+            ig.set_password(new_password)
+            # Log event and password
+            with open('INITIATED','wt') as fout:
+                fout.write(
+                    f"{new_password} set {datetime.datetime.now()}"
+                )
             # Test and return
             return str(ig.relationships)
 
