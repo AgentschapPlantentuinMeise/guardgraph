@@ -304,7 +304,7 @@ def case_study_interactions(
 ''',
                                  species_list=species_with_ix)
     triadic_nodes = pd.DataFrame(triadic_nodes)
-    if not triadic_nodes,empty: triadic_nodes['TYPESTR'] = triadic_nodes.apply(
+    if not triadic_nodes.empty: triadic_nodes['TYPESTR'] = triadic_nodes.apply(
         lambda x: str(
             pd.Series([x['TYPE(r)'], x['TYPE(q)']])
             .value_counts().sort_index().to_dict()
